@@ -4,17 +4,21 @@ import { chatglmAdapter } from "./chatglm";
 import { customAdapter } from "./custom";
 import { deepseekAdapter } from "./deepseek";
 import { doubaoAdapter } from "./doubao";
+import { doubaoSdkAdapter } from "./doubao-sdk";
 import { ollamaAdapter } from "./ollama";
 import { openaiAdapter } from "./openai";
+import { openaiSdkAdapter } from "./openai-sdk";
 import type { ProviderAdapter } from "./types";
 
 const adapters = new Map<ProviderAdapterId, ProviderAdapter>();
 
 const BUILTIN_ADAPTERS: readonly ProviderAdapter[] = [
   openaiAdapter,
+  openaiSdkAdapter,
   deepseekAdapter,
   chatglmAdapter,
   doubaoAdapter,
+  doubaoSdkAdapter,
   ollamaAdapter,
   customAdapter,
   anthropicAdapter,

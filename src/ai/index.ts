@@ -14,13 +14,20 @@ export {
   createDefaultAiSettings,
   createProfileFromTemplate,
   getActiveProfile,
+  getAllModelOptions,
   getProfileModels,
   isProfileConfigured,
   loadAiSettings,
   normalizeAiSettings,
   PROVIDER_TEMPLATES,
   resolveActiveModel,
+  createSessionId,
+  getActiveSession,
+  loadActiveSessionId,
+  loadSessions,
+  saveActiveSessionId,
   saveAiSettings,
+  saveSessions,
   withResolvedModel,
   AI_SETTINGS_KEY,
   DEFAULT_MAX_TOOL_ROUNDS,
@@ -28,6 +35,8 @@ export {
 export type {
   AiProviderProfile,
   AiSettings,
+  ChatSession,
+  ModelOption,
   ProviderTemplate,
 } from "./settings";
 
@@ -56,7 +65,9 @@ export type {
   MessageRole,
   OpenTabSnapshot,
   ProviderAdapterId,
+  ReasoningEffort,
   StreamChunk,
+  ThinkingMode,
   ToolCall,
   ToolChoice,
   ToolDefinition,
@@ -123,11 +134,16 @@ export type {
   WorkspaceFsEntry,
   WorkspaceReadOptions,
   WorkspaceReadResult,
+  WorkspaceSearchHit,
+  WorkspaceSearchOptions,
+  WorkspaceSearchResultDto,
 } from "./workspace/bridge";
 export {
   DEFAULT_MAX_DIR_ENTRIES,
   DEFAULT_MAX_READ_CHARS,
   DEFAULT_MAX_READ_LINES,
+  DEFAULT_MAX_SEARCH_HITS_PER_FILE,
+  DEFAULT_MAX_SEARCH_TOTAL_HITS,
   IGNORED_DIRECTORY_NAMES,
 } from "./workspace/limits";
 

@@ -5,6 +5,7 @@ type IconName =
   | "copy"
   | "file"
   | "folder"
+  | "image"
   | "layout"
   | "more"
   | "moon"
@@ -53,6 +54,13 @@ const paths: Record<IconName, React.ReactNode> = {
   ),
   folder: (
     <path d="M3 6a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" />
+  ),
+  image: (
+    <>
+      <rect width="18" height="18" rx="2" x="3" y="3" />
+      <circle cx="8.5" cy="8.5" r="1.5" fill="currentColor" stroke="none" />
+      <path d="m21 15-5-5L5 21" />
+    </>
   ),
   layout: (
     <>

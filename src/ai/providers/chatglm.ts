@@ -44,6 +44,10 @@ function toChatGlmMessage(message: Message): Record<string, unknown> {
     }));
   }
 
+  if (message.role === "assistant" && message.reasoningContent) {
+    payload.reasoning_content = message.reasoningContent;
+  }
+
   if (message.role === "tool") {
     payload.tool_call_id = message.toolCallId;
     if (message.name) {
@@ -76,7 +80,7 @@ export function buildChatGlmChatBody(
   request: UnifiedChatRequest,
 ): Record<string, unknown> {
   const body: Record<string, unknown> = {
-    model: request.model || profile.model,
+    model: request.model || profile.models[0],
     messages: request.messages.map(toChatGlmMessage),
     stream: request.stream ?? true,
   };
@@ -95,6 +99,14 @@ export function buildChatGlmChatBody(
   if (tools) {
     body.tools = tools;
     body.tool_choice = request.toolChoice ?? "auto";
+  }
+
+  if (request.thinking) {
+    body.thinking = { type: request.thinking };
+  }
+
+  if (request.reasoningEffort) {
+    body.reasoning_effort = request.reasoningEffort;
   }
 
   return body;
@@ -122,6 +134,7 @@ function parseChatGlmSsePayload(
     choices?: Array<{
       delta?: {
         content?: string | null;
+        reasoning_content?: string | null;
         tool_calls?: Array<{
           index?: number;
           id?: string;
@@ -146,6 +159,9 @@ function parseChatGlmSsePayload(
   const chunks: StreamChunk[] = [];
   const choice = json.choices?.[0];
   const delta = choice?.delta;
+  if (delta?.reasoning_content) {
+    chunks.push({ type: "thinking-delta", text: delta.reasoning_content });
+  }
   if (delta?.content) {
     chunks.push({ type: "text-delta", text: delta.content });
   }
@@ -187,7 +203,7 @@ async function* streamChatGlmChat(
     yield { type: "error", error: "请先填写智谱 Base URL。" };
     return;
   }
-  if (!profile.model.trim() && !request.model.trim()) {
+  if (!profile.models[0]?.trim() && !request.model.trim()) {
     yield { type: "error", error: "请先填写模型名称。" };
     return;
   }
@@ -250,7 +266,7 @@ async function testChatGlmConnection(
   profile: AiProviderProfile,
   signal?: AbortSignal,
 ): Promise<ProviderTestResult> {
-  if (!profile.baseUrl.trim() || !profile.apiKey.trim() || !profile.model.trim()) {
+  if (!profile.baseUrl.trim() || !profile.apiKey.trim() || !profile.models[0]?.trim()) {
     return { ok: false, message: "请填写 Base URL、API Key 与模型名称。" };
   }
 
@@ -264,7 +280,7 @@ async function testChatGlmConnection(
       method: "POST",
       headers: buildChatGlmChatHeaders(profile),
       body: JSON.stringify({
-        model: profile.model,
+        model: profile.models[0],
         messages: [{ role: "user", content: "ping" }],
         max_tokens: 1,
         stream: false,

@@ -9,19 +9,24 @@ import {
   createMessageId,
   type AiMode,
   type Message,
+  type ReasoningEffort,
   type StreamChunk,
+  type ThinkingMode,
   type ToolCall,
 } from "../types";
 import { toolChoiceForMode } from "./modes";
 
+/** Agent 循环过程中向外推送的事件，UI 层据此增量渲染。 */
 export type AgentEvent =
   | { type: "text-delta"; text: string }
+  | { type: "thinking-delta"; text: string }
   | { type: "tool-call"; call: ToolCall }
   | { type: "tool-result"; call: ToolCall; content: string; ok: boolean }
   | { type: "message"; message: Message }
   | { type: "done"; message: Message }
   | { type: "error"; error: string };
 
+/** 启动 Agent 循环所需的所有参数。 */
 export interface AgentLoopOptions {
   mode: AiMode;
   profile: AiProviderProfile;
@@ -30,14 +35,19 @@ export interface AgentLoopOptions {
   maxToolRounds?: number;
   temperature?: number;
   maxTokens?: number;
+  thinking?: ThinkingMode;
+  reasoningEffort?: ReasoningEffort;
   signal?: AbortSignal;
 }
 
+/** 单轮对话中积累的文本与工具调用。 */
 interface RoundAccumulation {
   text: string;
+  thinking: string;
   toolCalls: ToolCall[];
 }
 
+/** 合并 SSE 流式工具调用增量，同名同 id 则覆盖参数、同 id 补全名称。 */
 function mergeToolCallDelta(
   current: ToolCall | null,
   chunk: Extract<StreamChunk, { type: "tool-call" }>,
@@ -49,23 +59,30 @@ function mergeToolCallDelta(
       arguments: chunk.arguments,
     };
   }
+  // Provider 解析层已在 Map 中累加参数，chunk.arguments 即为当前完整值，直接替换即可。
   return {
     id: current.id,
     name: chunk.name || current.name,
-    arguments: `${current.arguments}${chunk.arguments}`,
+    arguments: chunk.arguments,
   };
 }
 
+/** 消费 Provider 返回的 SSE 流，累积文本与工具调用并通过回调外发事件。 */
 async function collectProviderRound(
   chunks: AsyncIterable<StreamChunk>,
   onEvent: (event: AgentEvent) => void | Promise<void>,
 ): Promise<RoundAccumulation | { error: string }> {
-  const accumulation: RoundAccumulation = { text: "", toolCalls: [] };
+  const accumulation: RoundAccumulation = { text: "", thinking: "", toolCalls: [] };
   let pendingToolCall: ToolCall | null = null;
 
   for await (const chunk of chunks) {
     if (chunk.type === "error") {
       return { error: chunk.error };
+    }
+    if (chunk.type === "thinking-delta") {
+      accumulation.thinking += chunk.text;
+      await onEvent({ type: "thinking-delta", text: chunk.text });
+      continue;
     }
     if (chunk.type === "text-delta") {
       accumulation.text += chunk.text;
@@ -136,12 +153,14 @@ export async function runAgentLoop(
       options.profile,
       {
         messages,
-        model: options.profile.model,
+        model: options.profile.models[0],
         tools: tools.length > 0 ? tools : undefined,
         toolChoice: toolChoiceForMode(options.mode),
         stream: true,
         temperature: options.temperature ?? options.profile.temperature,
         maxTokens: options.maxTokens ?? options.profile.maxTokens,
+        thinking: options.thinking,
+        reasoningEffort: options.reasoningEffort,
       },
       signal,
     );
@@ -159,6 +178,7 @@ export async function runAgentLoop(
       toolCalls: roundResult.toolCalls.length
         ? roundResult.toolCalls
         : undefined,
+      reasoningContent: roundResult.thinking || undefined,
     };
     messages.push(assistantMessage);
     await onEvent({ type: "message", message: assistantMessage });

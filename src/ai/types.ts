@@ -7,18 +7,22 @@ export type AiMode = "chat" | "agent-ask" | "agent-edit";
  */
 export type ProviderAdapterId =
   | "openai"
+  | "openai-sdk"
   | "deepseek"
   | "chatglm"
   | "doubao"
+  | "doubao-sdk"
   | "ollama"
   | "custom"
   | "anthropic";
 
 export const PROVIDER_ADAPTER_IDS: readonly ProviderAdapterId[] = [
   "openai",
+  "openai-sdk",
   "deepseek",
   "chatglm",
   "doubao",
+  "doubao-sdk",
   "ollama",
   "custom",
   "anthropic",
@@ -43,6 +47,10 @@ export interface Message {
   /** tool 消息回指的 call id */
   toolCallId?: string;
   name?: string;
+  /** 用户上传的图片（base64 data URL），仅 user 消息支持 */
+  images?: string[];
+  /** 思考/推理内容，assistant 消息回传时必须附带（DeepSeek 等要求） */
+  reasoningContent?: string;
 }
 
 export type JsonSchema = {
@@ -66,6 +74,9 @@ export interface ToolDefinition {
 
 export type ToolChoice = "auto" | "none" | "required";
 
+export type ThinkingMode = "enabled" | "disabled" | "auto";
+export type ReasoningEffort = "low" | "medium" | "high" | "max";
+
 export interface UnifiedChatRequest {
   messages: Message[];
   model: string;
@@ -74,10 +85,13 @@ export interface UnifiedChatRequest {
   stream?: boolean;
   temperature?: number;
   maxTokens?: number;
+  thinking?: ThinkingMode;
+  reasoningEffort?: ReasoningEffort;
 }
 
 export type StreamChunk =
   | { type: "text-delta"; text: string }
+  | { type: "thinking-delta"; text: string }
   | { type: "tool-call"; id: string; name: string; arguments: string }
   | { type: "message-stop" }
   | { type: "error"; error: string };

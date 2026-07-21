@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   PROVIDER_TEMPLATES,
+  createProfileFromTemplate,
   getActiveProfile,
   getProfileModels,
   getProviderAdapter,
@@ -189,21 +190,33 @@ function AiSettingsForm({
     const template = PROVIDER_TEMPLATES.find(
       (item) => item.id === templateId || item.adapter === templateId,
     );
-    if (!template) {
+    if (!template) return;
+
+    // 已有相同 adapter 的 profile → 直接切换，保留原来配置
+    const existing = draft.profiles.find((p) => p.adapter === template.adapter);
+    if (existing) {
+      setModelKeys(createModelSlotKeys(listProfileModels(existing).length));
+      persistNow({
+        ...draft,
+        activeProfileId: existing.id,
+        activeModel: resolveActiveModel(
+          { ...draft, activeProfileId: existing.id },
+          existing,
+        ),
+      });
+      setTestMessage(null);
       return;
     }
-    const models = template.model.trim() ? [template.model.trim()] : [""];
+
+    // 新建 profile
+    const newProfile = createProfileFromTemplate(template);
+    const models = listProfileModels(newProfile);
     setModelKeys(createModelSlotKeys(models.length));
     persistNow({
-      ...updateActiveProfile(draft, {
-        name: template.name,
-        adapter: template.adapter,
-        baseUrl: template.baseUrl,
-        model: template.model,
-        models,
-        chatPath: undefined,
-      }),
-      activeModel: template.model.trim() || undefined,
+      ...draft,
+      activeProfileId: newProfile.id,
+      activeModel: models[0],
+      profiles: [...draft.profiles, newProfile],
     });
     setTestMessage(null);
   };
@@ -238,7 +251,6 @@ function AiSettingsForm({
     persist({
       ...updateActiveProfile(draft, {
         models,
-        model: configured[0] ?? "",
       }),
       activeModel:
         draft.activeModel && configured.includes(draft.activeModel)
@@ -300,6 +312,23 @@ function AiSettingsForm({
       </label>
       <small className="settings-ai-form__debug-hint">
         开启后在 AI 面板查看请求消息拼装结果（不含 API Key）。
+      </small>
+
+      <label className="settings-field settings-field--checkbox">
+        <input
+          checked={draft.showToolCalls}
+          onChange={(event) =>
+            persistNow({
+              ...draft,
+              showToolCalls: event.target.checked,
+            })
+          }
+          type="checkbox"
+        />
+        <span>展示工具调用卡片</span>
+      </label>
+      <small className="settings-ai-form__debug-hint">
+        Agent 模式下显示 list_dir / read_file / search_workspace 等工具的调用详情（参数与返回），可折叠。关闭时仅在气泡内嵌简短标记。
       </small>
 
       <label className="settings-field">

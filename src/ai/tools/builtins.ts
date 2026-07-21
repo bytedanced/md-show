@@ -2,6 +2,7 @@ import { getTool, registerTool } from "./registry";
 import type { ToolHandler } from "./types";
 import { listDirTool } from "./listDir";
 import { readFileTool } from "./readFile";
+import { searchWorkspaceTool } from "./searchWorkspace";
 
 /**
  * 内置工具清单。新增工具：
@@ -12,7 +13,8 @@ import { readFileTool } from "./readFile";
 export const BUILTIN_TOOLS: readonly ToolHandler[] = [
   listDirTool,
   readFileTool,
-  // search_workspace / edit_file / create_file — 后续追加
+  searchWorkspaceTool,
+  // edit_file / create_file — 后续追加
 ];
 
 /** 幂等注册内置工具，可在 App 启动或面板挂载时调用。 */
@@ -23,6 +25,9 @@ export function ensureBuiltinToolsRegistered(): void {
     }
   }
 }
+
+// 模块加载时自注册，避免 HMR 重载 builtins.ts 但 App 未 remount 时 handlers Map 缺失。
+ensureBuiltinToolsRegistered();
 
 export function listBuiltinToolNames(): string[] {
   return BUILTIN_TOOLS.map((tool) => tool.name);

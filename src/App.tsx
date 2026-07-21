@@ -372,8 +372,17 @@ function App() {
         },
         readTextFile,
         joinPath: (base, name) => join(base, name),
+        search: (query) =>
+          searchWorkspace(query).then((hits) =>
+            hits.map((hit) => ({
+              line: hit.line,
+              name: hit.name,
+              path: hit.path,
+              preview: hit.preview,
+            })),
+          ),
       }),
-    [openTabSnapshots, workspaceRoot],
+    [openTabSnapshots, searchWorkspace, workspaceRoot],
   );
 
   useEffect(() => {

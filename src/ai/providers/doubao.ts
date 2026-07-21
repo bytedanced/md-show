@@ -28,6 +28,17 @@ export function joinDoubaoApiUrl(baseUrl: string, chatPath?: string): string {
 }
 
 function toDoubaoMessage(message: Message): Record<string, unknown> {
+  if (message.role === "user" && message.images?.length) {
+    const content: Record<string, unknown>[] = message.images.map((img) => ({
+      type: "image_url",
+      image_url: { url: img },
+    }));
+    if (message.content.trim()) {
+      content.push({ type: "text", text: message.content });
+    }
+    return { role: "user", content };
+  }
+
   const payload: Record<string, unknown> = {
     role: message.role,
     content: message.content,
@@ -42,6 +53,10 @@ function toDoubaoMessage(message: Message): Record<string, unknown> {
         arguments: call.arguments,
       },
     }));
+  }
+
+  if (message.role === "assistant" && message.reasoningContent) {
+    payload.reasoning_content = message.reasoningContent;
   }
 
   if (message.role === "tool") {
@@ -79,7 +94,7 @@ export function buildDoubaoChatBody(
   request: UnifiedChatRequest,
 ): Record<string, unknown> {
   const body: Record<string, unknown> = {
-    model: request.model || profile.model,
+    model: request.model || profile.models[0],
     messages: request.messages.map(toDoubaoMessage),
     stream: request.stream ?? true,
   };
@@ -98,6 +113,14 @@ export function buildDoubaoChatBody(
   if (tools) {
     body.tools = tools;
     body.tool_choice = request.toolChoice ?? "auto";
+  }
+
+  if (request.thinking) {
+    body.thinking = { type: request.thinking };
+  }
+
+  if (request.reasoningEffort) {
+    body.reasoning_effort = request.reasoningEffort;
   }
 
   return body;
@@ -125,6 +148,7 @@ function parseDoubaoSsePayload(
     choices?: Array<{
       delta?: {
         content?: string | null;
+        reasoning_content?: string | null;
         tool_calls?: Array<{
           index?: number;
           id?: string;
@@ -149,6 +173,9 @@ function parseDoubaoSsePayload(
   const chunks: StreamChunk[] = [];
   const choice = json.choices?.[0];
   const delta = choice?.delta;
+  if (delta?.reasoning_content) {
+    chunks.push({ type: "thinking-delta", text: delta.reasoning_content });
+  }
   if (delta?.content) {
     chunks.push({ type: "text-delta", text: delta.content });
   }
@@ -190,7 +217,7 @@ async function* streamDoubaoChat(
     yield { type: "error", error: "请先填写火山方舟 Base URL。" };
     return;
   }
-  if (!profile.model.trim() && !request.model.trim()) {
+  if (!profile.models[0]?.trim() && !request.model.trim()) {
     yield { type: "error", error: "模型名称应填写接入点 ID。" };
     return;
   }
@@ -253,7 +280,7 @@ async function testDoubaoConnection(
   profile: AiProviderProfile,
   signal?: AbortSignal,
 ): Promise<ProviderTestResult> {
-  if (!profile.baseUrl.trim() || !profile.apiKey.trim() || !profile.model.trim()) {
+  if (!profile.baseUrl.trim() || !profile.apiKey.trim() || !profile.models[0]?.trim()) {
     return {
       ok: false,
       message: "请填写 Base URL、API Key 与接入点 ID（模型名称）。",
@@ -270,7 +297,7 @@ async function testDoubaoConnection(
       method: "POST",
       headers: buildDoubaoChatHeaders(profile),
       body: JSON.stringify({
-        model: profile.model,
+        model: profile.models[0],
         messages: [{ role: "user", content: "ping" }],
         max_tokens: 1,
         stream: false,

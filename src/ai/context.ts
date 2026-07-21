@@ -6,7 +6,7 @@ import {
 } from "./types";
 
 export const DEFAULT_SYSTEM_PROMPT =
-  "你是墨览 Markdown 写作助手。优先输出可直接粘贴的 Markdown。除非用户要求，不要解释过程。";
+  "你是墨览 Markdown 写作助手";
 
 /** 无选区时附带全文的最大字符数，超出则截断并提示。 */
 export const DEFAULT_CONTENT_CHAR_LIMIT = 50_000;
@@ -184,6 +184,7 @@ export function composeRequestMessages(options: {
   history: Message[];
   userText: string;
   systemPrompt?: string;
+  images?: string[];
 }): Message[] {
   const { systemMessage, contextMessage } = buildDocumentContext({
     document: options.document,
@@ -204,6 +205,7 @@ export function composeRequestMessages(options: {
     id: createMessageId(),
     role: "user",
     content: options.userText,
+    images: options.images,
   });
   return messages;
 }

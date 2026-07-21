@@ -2,18 +2,26 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   composeRequestMessages,
   createMessageId,
+  createSessionId,
   getActiveProfile,
-  getProfileModels,
+  getAllModelOptions,
+  getActiveSession,
   isProfileConfigured,
+  loadSessions,
   resolveActiveModel,
   runAgentLoop,
+  saveActiveSessionId,
+  saveSessions,
   snippetDisplayName,
   snippetRangeLabel,
   withResolvedModel,
   type AiMode,
   type AiSettings,
+  type ChatSession,
   type ContextSnippet,
   type Message,
+  type ModelOption,
+  type ReasoningEffort,
   type WorkspaceBridge,
 } from "../ai";
 import { useDebouncedValue } from "../hooks/useDebouncedValue";
@@ -21,6 +29,7 @@ import { AiDebugPanel } from "./AiDebugPanel";
 import { AiMarkdown } from "./AiMarkdown";
 import { Icon } from "./Icon";
 
+/** 当前编辑器文档的上下文信息，包括路径、内容、选区、大纲和显式片段。 */
 export interface AiDocumentContext {
   path: string | null;
   content: string;
@@ -43,12 +52,21 @@ interface AiChatPanelProps {
   workspaceBridge: WorkspaceBridge;
 }
 
+/** 助手气泡内的渲染块：思考过程、正文文本、工具调用卡片。 */
+type BubbleBlock =
+  | { type: "thinking"; text: string; expanded: boolean }
+  | { type: "text"; text: string }
+  | { type: "tool-call"; id: string; name: string; arguments: string; status: "running" | "ok" | "error"; result?: string; expanded?: boolean };
+
+/** 对话列表中的单条气泡（用户 or 助手）。 */
 interface ChatBubble {
   id: string;
   role: "user" | "assistant";
   content: string;
   streaming?: boolean;
   error?: boolean;
+  blocks?: BubbleBlock[];
+  images?: string[];
 }
 
 const QUICK_PROMPTS = [
@@ -59,12 +77,18 @@ const QUICK_PROMPTS = [
 ];
 
 const ASK_SYSTEM_PROMPT =
-  "你是墨览 Markdown 写作助手，当前为 Agent Ask（只读）模式。需要了解工作区内容时，先使用 list_dir / read_file 工具再回答；引用时标明文件路径。优先输出可直接粘贴的 Markdown。除非用户要求，不要解释过程。";
+  "你是墨览 Markdown 写作助手，当前为 Agent Ask（只读）模式。需要了解工作区内容时，先使用工具再回答，可用工具：\n" +
+  "- search_workspace(query)：在工作区内全文搜索某关键字，返回命中文件路径、行号与行预览。用户问「某主题在哪些文档」时优先用它。\n" +
+  "- list_dir(path)：列出某目录下的子目录与文本文件。\n" +
+  "- read_file(path, offset?, limit?)：读取文件内容，已打开标签会优先返回未保存内容。\n" +
+  "引用时标明文件路径与行号。优先输出可直接粘贴的 Markdown。除非用户要求，不要解释过程。";
 
+/** 面板层将 agent-edit 降级为 agent-ask（edit 模式需后续安全机制就位后开启）。 */
 function resolvePanelMode(mode: AiMode): AiMode {
   return mode === "agent-edit" ? "agent-ask" : mode;
 }
 
+/** AI 对话面板主组件：管理气泡列表、流式渲染、工具调用展示与用户操作。 */
 export function AiChatPanel({
   aiSettings,
   document,
@@ -77,21 +101,56 @@ export function AiChatPanel({
   workspaceBridge,
 }: AiChatPanelProps) {
   const [input, setInput] = useState("");
-  const [bubbles, setBubbles] = useState<ChatBubble[]>([]);
-  const [history, setHistory] = useState<Message[]>([]);
+  const [sessions, setSessions] = useState<ChatSession[]>(() => loadSessions());
+  const [activeSessionId, setActiveSessionId] = useState<string>(() => {
+    const active = getActiveSession(loadSessions());
+    const id = active?.id ?? createSessionId();
+    if (!active) saveActiveSessionId(id);
+    return id;
+  });
+
+  const activeSession = sessions.find((s) => s.id === activeSessionId) ?? null;
+  const [bubbles, setBubbles] = useState<ChatBubble[]>(() => {
+    const msgs = activeSession?.messages ?? [];
+    return msgs.map((m) => {
+      if (m.role === "user") {
+        return { id: m.id, role: "user", content: m.content, images: m.images };
+      }
+      return { id: m.id, role: "assistant", content: m.content };
+    });
+  });
+  const [history, setHistory] = useState<Message[]>(() => activeSession?.messages ?? []);
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastDebugMessages, setLastDebugMessages] = useState<Message[] | null>(
     null,
   );
+  const [uploadedImages, setUploadedImages] = useState<string[]>([]);
+  const [thinkingLevel, setThinkingLevel] = useState<ReasoningEffort | "disabled">("high");
+  const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const renameInputRef = useRef<HTMLInputElement>(null);
 
   const profile = getActiveProfile(aiSettings);
   const configured = profile ? isProfileConfigured(profile) : false;
   const canChat = aiSettings.enabled && configured && Boolean(profile);
-  const availableModels = profile ? getProfileModels(profile) : [];
+  const allModelOptions = getAllModelOptions(aiSettings);
   const activeModel = profile ? resolveActiveModel(aiSettings, profile) : "";
+
+  const groupedModels = useMemo(() => {
+    const groups = new Map<string, ModelOption[]>();
+    for (const opt of allModelOptions) {
+      const list = groups.get(opt.profileName);
+      if (list) {
+        list.push(opt);
+      } else {
+        groups.set(opt.profileName, [opt]);
+      }
+    }
+    return Array.from(groups.entries());
+  }, [allModelOptions]);
   const mode = resolvePanelMode(aiSettings.defaultMode);
   const hasWorkspace = Boolean(workspaceBridge.workspaceRoot);
   const hasSnippets = document.snippets.length > 0;
@@ -158,6 +217,93 @@ export function AiChatPanel({
     };
   }, []);
 
+  useEffect(() => {
+    if (!activeSession) return;
+    const autoName = activeSession.nameManual
+      ? activeSession.name
+      : getSessionName(history) || "新会话";
+    const updated: ChatSession = {
+      ...activeSession,
+      name: autoName,
+      messages: history,
+      updatedAt: Date.now(),
+    };
+    const next = sessions.map((s) => (s.id === activeSessionId ? updated : s));
+    setSessions(next);
+    saveSessions(next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [history]);
+
+  const getSessionName = (msgs: Message[]) => {
+    const firstUser = msgs.find((m) => m.role === "user");
+    return firstUser?.content.slice(0, 20) || "";
+  };
+
+  const switchSession = (id: string) => {
+    saveActiveSessionId(id);
+    const session = sessions.find((s) => s.id === id);
+    const msgs = session?.messages ?? [];
+    setActiveSessionId(id);
+    setHistory(msgs);
+    setBubbles(msgs.map((m) => {
+      if (m.role === "user") {
+        return { id: m.id, role: "user", content: m.content, images: m.images };
+      }
+      return { id: m.id, role: "assistant", content: m.content };
+    }));
+  };
+
+  const newSession = () => {
+    const id = createSessionId();
+    const session: ChatSession = {
+      id,
+      name: "",
+      nameManual: false,
+      messages: [],
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    const next = [session, ...sessions];
+    setSessions(next);
+    saveSessions(next);
+    saveActiveSessionId(id);
+    setActiveSessionId(id);
+    setHistory([]);
+    setBubbles([]);
+    setError(null);
+  };
+
+  const renameSession = (id: string, name: string) => {
+    const trimmed = name.trim();
+    const next = sessions.map((s) =>
+      s.id === id
+        ? { ...s, name: trimmed || "新会话", nameManual: trimmed.length > 0 }
+        : s,
+    );
+    setSessions(next);
+    saveSessions(next);
+    setEditingSessionId(null);
+  };
+
+  const startRename = (id: string) => {
+    setEditingSessionId(id);
+    setTimeout(() => renameInputRef.current?.focus(), 0);
+  };
+
+  const deleteSession = (id: string) => {
+    const next = sessions.filter((s) => s.id !== id);
+    setSessions(next);
+    saveSessions(next);
+    if (id === activeSessionId) {
+      const target = next[0];
+      if (target) {
+        switchSession(target.id);
+      } else {
+        newSession();
+      }
+    }
+  };
+
   const stopGenerating = () => {
     abortRef.current?.abort();
     abortRef.current = null;
@@ -188,9 +334,58 @@ export function AiChatPanel({
     });
   };
 
+  const handlePaste = (event: React.ClipboardEvent) => {
+    const files = event.clipboardData?.files;
+    if (!files?.length) return;
+    const imageFiles: File[] = [];
+    for (let i = 0; i < files.length; i++) {
+      if (files[i].type.startsWith("image/")) imageFiles.push(files[i]);
+    }
+    if (imageFiles.length === 0) return;
+    const readers: Promise<string>[] = [];
+    for (const file of imageFiles) {
+      readers.push(
+        new Promise<string>((resolve) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result as string);
+          reader.readAsDataURL(file);
+        }),
+      );
+    }
+    Promise.all(readers).then((images) => {
+      setUploadedImages((prev) => [...prev, ...images]);
+    });
+  };
+
+  const handleImageSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files;
+    if (!files?.length) return;
+    const readers: Promise<string>[] = [];
+    for (const file of files) {
+      if (!file.type.startsWith("image/")) continue;
+      readers.push(
+        new Promise<string>((resolve) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result as string);
+          reader.readAsDataURL(file);
+        }),
+      );
+    }
+    Promise.all(readers).then((images) => {
+      setUploadedImages((prev) => [...prev, ...images]);
+    });
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  const removeImage = (index: number) => {
+    setUploadedImages((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  /** 发送消息 → 构建上下文 → 启动 Agent 循环 → 流式更新气泡。 */
   const sendMessage = async (textOverride?: string) => {
     const text = (textOverride ?? input).trim();
-    if (!text || !profile || !canChat || isGenerating) {
+    const hasContent = text.length > 0 || uploadedImages.length > 0;
+    if (!hasContent || !profile || !canChat || isGenerating) {
       return;
     }
 
@@ -199,17 +394,21 @@ export function AiChatPanel({
       return;
     }
 
+    const images = [...uploadedImages];
     setInput("");
+    setUploadedImages([]);
     setError(null);
     const userMessage: Message = {
       id: createMessageId(),
       role: "user",
       content: text,
+      images: images.length > 0 ? images : undefined,
     };
     const userBubble: ChatBubble = {
       id: userMessage.id,
       role: "user",
       content: text,
+      images: images.length > 0 ? images : undefined,
     };
     const assistantId = createMessageId();
     setBubbles((prev) => [
@@ -227,6 +426,7 @@ export function AiChatPanel({
         includeActiveDocument: document.includeActiveDocument,
       },
       history,
+      images: images.length > 0 ? images : undefined,
       systemPrompt: mode === "agent-ask" ? ASK_SYSTEM_PROMPT : undefined,
       userText: text,
     });
@@ -240,6 +440,7 @@ export function AiChatPanel({
     setIsGenerating(true);
 
     let assistantText = "";
+    let inThinkingPhase = false;
     try {
       const assistantMessage = await runAgentLoop(
         {
@@ -248,6 +449,8 @@ export function AiChatPanel({
           messages,
           signal: controller.signal,
           maxToolRounds: aiSettings.maxToolRounds,
+          thinking: thinkingLevel === "disabled" ? "disabled" : "enabled",
+          reasoningEffort: thinkingLevel === "disabled" ? undefined : thinkingLevel,
           toolContext: {
             workspaceRoot: workspaceBridge.workspaceRoot,
             openTabs: workspaceBridge.openTabs,
@@ -256,17 +459,104 @@ export function AiChatPanel({
           },
         },
         (event) => {
+          if (event.type === "thinking-delta") {
+            if (!inThinkingPhase) {
+              inThinkingPhase = true;
+              setBubbles((prev) =>
+                prev.map((bubble) =>
+                  bubble.id === assistantId
+                    ? {
+                        ...bubble,
+                        blocks: [
+                          ...(bubble.blocks ?? []),
+                          { type: "thinking", text: event.text, expanded: true },
+                        ],
+                        streaming: true,
+                      }
+                    : bubble,
+                ),
+              );
+            } else {
+              setBubbles((prev) =>
+                prev.map((bubble) => {
+                  if (bubble.id !== assistantId) return bubble;
+                  const blocks = bubble.blocks ?? [];
+                  const last = blocks[blocks.length - 1];
+                  if (last?.type !== "thinking") return bubble;
+                  const updated = [...blocks];
+                  updated[updated.length - 1] = {
+                    ...last,
+                    text: last.text + event.text,
+                  };
+                  return { ...bubble, blocks: updated, streaming: true };
+                }),
+              );
+            }
+          }
           if (event.type === "text-delta") {
+            inThinkingPhase = false;
             assistantText += event.text;
+            setBubbles((prev) =>
+              prev.map((bubble) => {
+                if (bubble.id !== assistantId) return bubble;
+                const blocks = bubble.blocks ?? [];
+                const last = blocks[blocks.length - 1];
+                if (last?.type === "text") {
+                  const updated = [...blocks];
+                  updated[updated.length - 1] = { type: "text", text: assistantText };
+                  return { ...bubble, content: assistantText, blocks: updated, streaming: true };
+                }
+                return {
+                  ...bubble,
+                  content: assistantText,
+                  blocks: [...blocks, { type: "text", text: assistantText }],
+                  streaming: true,
+                };
+              }),
+            );
+          }
+          if (event.type === "tool-call") {
+            inThinkingPhase = false;
             setBubbles((prev) =>
               prev.map((bubble) =>
                 bubble.id === assistantId
-                  ? { ...bubble, content: assistantText, streaming: true }
+                  ? {
+                      ...bubble,
+                      blocks: [
+                        ...(bubble.blocks ?? []),
+                        {
+                          type: "tool-call",
+                          id: event.call.id,
+                          name: event.call.name,
+                          arguments: event.call.arguments,
+                          status: "running",
+                        },
+                      ],
+                    }
                   : bubble,
               ),
             );
           }
+          if (event.type === "tool-result") {
+            inThinkingPhase = false;
+            setBubbles((prev) =>
+              prev.map((bubble) => {
+                if (bubble.id !== assistantId) return bubble;
+                const blocks = (bubble.blocks ?? []).map((block) =>
+                  block.type === "tool-call" && block.id === event.call.id
+                    ? {
+                        ...block,
+                        status: event.ok ? "ok" as const : "error" as const,
+                        result: event.content,
+                      }
+                    : block,
+                );
+                return { ...bubble, blocks };
+              }),
+            );
+          }
           if (event.type === "error") {
+            inThinkingPhase = false;
             setError(event.error);
           }
         },
@@ -274,15 +564,20 @@ export function AiChatPanel({
 
       assistantText = assistantMessage.content || assistantText;
       setBubbles((prev) =>
-        prev.map((bubble) =>
-          bubble.id === assistantId
-            ? {
-              ...bubble,
-              content: assistantText || "（无回复内容）",
-              streaming: false,
-            }
-            : bubble,
-        ),
+        prev.map((bubble) => {
+          if (bubble.id !== assistantId) return bubble;
+          const blocks = bubble.blocks ?? [];
+          const hasTextBlock = blocks.some((b) => b.type === "text");
+          if (!hasTextBlock && assistantText) {
+            blocks.push({ type: "text", text: assistantText });
+          }
+          return {
+            ...bubble,
+            content: assistantText || "（无回复内容）",
+            blocks: blocks.length > 0 ? blocks : undefined,
+            streaming: false,
+          };
+        }),
       );
       setHistory((prev) => [
         ...prev,
@@ -361,15 +656,20 @@ export function AiChatPanel({
 
   const docName = document.path?.split(/[/\\]/).pop() || "未命名文档";
 
-  const handleModelChange = (model: string) => {
+  const handleModelChange = (composite: string) => {
+    const sep = composite.lastIndexOf("::");
+    if (sep < 0) return;
     onAiSettingsChange({
       ...aiSettings,
-      activeModel: model,
+      activeProfileId: composite.slice(0, sep),
+      activeModel: composite.slice(sep + 2),
     });
   };
 
+  /** 渲染气泡正文：生成中显示打字动画，助手消息用 Markdown 渲染。 */
   const renderBubbleContent = (bubble: ChatBubble) => {
-    if (bubble.streaming && !bubble.content) {
+    const hasBlocks = bubble.blocks && bubble.blocks.length > 0;
+    if (bubble.streaming && !bubble.content && !hasBlocks) {
       return (
         <span className="ai-chat__typing" aria-label="正在生成">
           <span />
@@ -383,11 +683,183 @@ export function AiChatPanel({
       return <AiMarkdown content={bubble.content || "…"} />;
     }
 
-    return <div className="ai-chat__plain-text">{bubble.content || "…"}</div>;
+    return (
+      <div>
+        {bubble.images?.map((img, i) => (
+          <img
+            key={i}
+            alt="上传的图片"
+            className="ai-chat__uploaded-image"
+            src={img}
+            style={{ maxWidth: 200, maxHeight: 200, borderRadius: 8, marginBottom: 4, display: "block" }}
+          />
+        ))}
+        <div className="ai-chat__plain-text">{bubble.content || "…"}</div>
+      </div>
+    );
+  };
+
+  const toggleThinkingExpanded = (bubbleId: string, blockIndex: number) => {
+    setBubbles((prev) =>
+      prev.map((bubble) => {
+        if (bubble.id !== bubbleId || !bubble.blocks) return bubble;
+        const updated = [...bubble.blocks];
+        const block = updated[blockIndex];
+        if (block?.type === "thinking") {
+          updated[blockIndex] = { ...block, expanded: !block.expanded };
+        }
+        return { ...bubble, blocks: updated };
+      }),
+    );
+  };
+
+  const toggleToolCallExpanded = (bubbleId: string, callId: string) => {
+    setBubbles((prev) =>
+      prev.map((bubble) => {
+        if (bubble.id !== bubbleId || !bubble.blocks) return bubble;
+        const updated = bubble.blocks.map((block) =>
+          block.type === "tool-call" && block.id === callId
+            ? { ...block, expanded: !block.expanded }
+            : block,
+        );
+        return { ...bubble, blocks: updated };
+      }),
+    );
+  };
+
+  /** 渲染单个 BubbleBlock：思考折叠面板 / 工具调用卡片 / 工具简标。 */
+  const renderBlock = (bubble: ChatBubble, block: BubbleBlock, blockIndex: number) => {
+    if (block.type === "thinking") {
+      return (
+        <div
+          className={`ai-chat__thinking${block.expanded ? " is-expanded" : ""}`}
+          key={blockIndex}
+        >
+          <button
+            className="ai-chat__thinking-header"
+            onClick={() => toggleThinkingExpanded(bubble.id, blockIndex)}
+            type="button"
+          >
+            <span className="ai-chat__thinking-icon" aria-hidden="true">💡</span>
+            <span className="ai-chat__thinking-label">思考过程</span>
+            <span aria-hidden="true" className="ai-chat__thinking-chevron">
+              {block.expanded ? "▾" : "▸"}
+            </span>
+          </button>
+          {block.expanded && (
+            <div className="ai-chat__thinking-body">{block.text}</div>
+          )}
+        </div>
+      );
+    }
+    if (block.type === "tool-call") {
+      if (!aiSettings.showToolCalls) {
+        return (
+          <span
+            className={`ai-chat__tool-mark ai-chat__tool-mark--${block.status}`}
+            key={blockIndex}
+            title={`${block.name}（${block.arguments.slice(0, 120) || "无参数"}）`}
+          >
+            <span aria-hidden="true">
+              {block.status === "running" ? "⏳" : block.status === "ok" ? "✓" : "✕"}
+            </span>
+            {block.name}
+          </span>
+        );
+      }
+      return (
+        <div
+          className={`ai-chat__tool-call ai-chat__tool-call--${block.status}`}
+          key={block.id}
+        >
+          <button
+            className="ai-chat__tool-call-header"
+            onClick={() => toggleToolCallExpanded(bubble.id, block.id)}
+            type="button"
+          >
+            <span className="ai-chat__tool-call-icon" aria-hidden="true">
+              {block.status === "running" ? "⏳" : block.status === "ok" ? "✓" : "✕"}
+            </span>
+            <span className="ai-chat__tool-call-name">{block.name}</span>
+            <span className="ai-chat__tool-call-status">
+              {block.status === "running" ? "调用中…" : block.status === "ok" ? "成功" : "失败"}
+            </span>
+            <span aria-hidden="true" className="ai-chat__tool-call-chevron">
+              {block.expanded ? "▾" : "▸"}
+            </span>
+          </button>
+          {block.expanded && (
+            <div className="ai-chat__tool-call-body">
+              <div className="ai-chat__tool-call-section">
+                <div className="ai-chat__tool-call-section-label">参数</div>
+                <pre className="ai-chat__tool-call-pre">
+                  {block.arguments || "（无参数）"}
+                </pre>
+              </div>
+              {block.result !== undefined && (
+                <div className="ai-chat__tool-call-section">
+                  <div className="ai-chat__tool-call-section-label">结果</div>
+                  <pre className="ai-chat__tool-call-pre">{block.result}</pre>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      );
+    }
+    return null;
   };
 
   return (
     <div className="ai-chat">
+      <div className="ai-chat__sessions">
+        {sessions.map((s) => (
+          <div
+            className={`ai-chat__session-tab${s.id === activeSessionId ? " is-active" : ""}`}
+            key={s.id}
+            onClick={() => switchSession(s.id)}
+          >
+            {editingSessionId === s.id ? (
+              <input
+                ref={renameInputRef}
+                className="ai-chat__session-tab-input"
+                defaultValue={s.name || "新会话"}
+                onBlur={(e) => renameSession(s.id, e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") renameSession(s.id, (e.target as HTMLInputElement).value);
+                  if (e.key === "Escape") setEditingSessionId(null);
+                }}
+              />
+            ) : (
+              <span
+                className="ai-chat__session-tab-name"
+                onDoubleClick={() => startRename(s.id)}
+                title="双击重命名"
+              >
+                {s.name || "新会话"}
+              </span>
+            )}
+            {sessions.length > 1 && (
+              <button
+                className="ai-chat__session-tab-close"
+                onClick={(e) => { e.stopPropagation(); deleteSession(s.id); }}
+                title="删除会话"
+                type="button"
+              >
+                &times;
+              </button>
+            )}
+          </div>
+        ))}
+        <button
+          className="ai-chat__session-new"
+          onClick={newSession}
+          title="新建会话"
+          type="button"
+        >
+          +
+        </button>
+      </div>
       <div className="ai-chat__messages" ref={listRef}>
         {bubbles.length === 0 && (
           <div className="ai-chat__welcome">
@@ -429,6 +901,9 @@ export function AiChatPanel({
                   <Icon name="sparkles" size={14} />
                 </span>
                 <div className="ai-chat__message-main">
+                  {bubble.blocks?.map((block, index) =>
+                    renderBlock(bubble, block, index),
+                  )}
                   <div className="ai-chat__bubble-body">{renderBubbleContent(bubble)}</div>
                   {bubble.content && !bubble.streaming && !bubble.error && (
                     <div className="ai-chat__bubble-actions">
@@ -556,6 +1031,23 @@ export function AiChatPanel({
             )}
           </div>
         </div>
+        {uploadedImages.length > 0 && (
+          <div className="ai-chat__image-previews">
+            {uploadedImages.map((img, i) => (
+              <div key={i} className="ai-chat__image-preview-item">
+                <img alt={`图片 ${i + 1}`} src={img} />
+                <button
+                  aria-label="移除图片"
+                  className="ai-chat__image-preview-remove"
+                  onClick={() => removeImage(i)}
+                  type="button"
+                >
+                  &times;
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
         <textarea
           aria-label="向 AI 发送消息"
           disabled={isGenerating}
@@ -566,6 +1058,7 @@ export function AiChatPanel({
               void sendMessage();
             }
           }}
+          onPaste={handlePaste}
           placeholder="输入问题… Enter 发送，Shift+Enter 换行"
           rows={3}
           value={input}
@@ -588,7 +1081,26 @@ export function AiChatPanel({
                 <Icon name="chevron" size={12} />
               </span>
             </label>
-            {availableModels.length > 1 ? (
+            <label className="ai-chat__pill ai-chat__pill--mode" title="思考强度">
+              <span className="ai-chat__pill-label">思考: {thinkingLevel === "disabled" ? "关闭" : thinkingLevel}</span>
+              <select
+                aria-label="选择思考强度"
+                className="ai-chat__pill-select"
+                disabled={isGenerating}
+                onChange={(event) => setThinkingLevel(event.target.value as ReasoningEffort | "disabled")}
+                value={thinkingLevel}
+              >
+                <option value="disabled">关闭</option>
+                <option value="low">low</option>
+                <option value="medium">medium</option>
+                <option value="high">high</option>
+                <option value="max">max</option>
+              </select>
+              <span aria-hidden="true" className="ai-chat__pill-chevron">
+                <Icon name="chevron" size={12} />
+              </span>
+            </label>
+            {allModelOptions.length > 1 ? (
               <label className="ai-chat__pill ai-chat__pill--model">
                 <span className="ai-chat__pill-label">{activeModel}</span>
                 <select
@@ -596,12 +1108,16 @@ export function AiChatPanel({
                   className="ai-chat__pill-select"
                   disabled={isGenerating}
                   onChange={(event) => handleModelChange(event.target.value)}
-                  value={activeModel}
+                  value={`${aiSettings.activeProfileId}::${activeModel}`}
                 >
-                  {availableModels.map((model) => (
-                    <option key={model} value={model}>
-                      {model}
-                    </option>
+                  {groupedModels.map(([profileName, options]) => (
+                    <optgroup key={profileName} label={profileName}>
+                      {options.map((opt) => (
+                        <option key={opt.profileId + opt.model} value={`${opt.profileId}::${opt.model}`}>
+                          {opt.model}
+                        </option>
+                      ))}
+                    </optgroup>
                   ))}
                 </select>
                 <span aria-hidden="true" className="ai-chat__pill-chevron">
@@ -613,9 +1129,47 @@ export function AiChatPanel({
                 <span className="ai-chat__pill-label">{activeModel || "未配置"}</span>
               </div>
             )}
+
+            <button
+              aria-label={aiSettings.showToolCalls ? "折叠工具详情" : "展开工具详情"}
+              aria-pressed={aiSettings.showToolCalls}
+              className={`ai-chat__pill ai-chat__pill--tool-toggle${aiSettings.showToolCalls ? " is-active" : ""}${mode !== "agent-ask" ? " is-muted" : ""}`}
+              disabled={mode !== "agent-ask"}
+              onClick={() =>
+                onAiSettingsChange({
+                  ...aiSettings,
+                  showToolCalls: !aiSettings.showToolCalls,
+                })
+              }
+              title={mode !== "agent-ask" ? "工具仅在 Agent 模式下可用" : undefined}
+              type="button"
+            >
+              <span className="ai-chat__pill-label">工具</span>
+              <span className="ai-chat__pill-tag">{aiSettings.showToolCalls ? "展开" : "折叠"}</span>
+            </button>
           </div>
 
           <div className="ai-chat__composer-actions">
+            <input
+              accept="image/*"
+              aria-label="上传图片"
+              className="ai-chat__file-input"
+              multiple
+              onChange={handleImageSelect}
+              ref={fileInputRef}
+              style={{ display: "none" }}
+              type="file"
+            />
+            <button
+              aria-label="上传图片"
+              className="icon-button ai-chat__composer-tool"
+              disabled={isGenerating}
+              onClick={() => fileInputRef.current?.click()}
+              title="上传图片（支持视觉理解）"
+              type="button"
+            >
+              <Icon name="image" size={14} />
+            </button>
             <button
               aria-label="清空对话"
               className="icon-button ai-chat__composer-tool"

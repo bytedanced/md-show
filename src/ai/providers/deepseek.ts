@@ -15,6 +15,7 @@ import type { ProviderAdapter, ProviderTestResult } from "./types";
 
 const DEFAULT_CHAT_PATH = "/chat/completions";
 
+/** 拼接 Base URL 与 Chat Path，自动处理 /v1 路径重合。 */
 export function joinDeepSeekApiUrl(baseUrl: string, chatPath?: string): string {
   const normalizedBase = baseUrl.replace(/\/+$/, "");
   const rawPath = chatPath?.trim() || DEFAULT_CHAT_PATH;
@@ -25,6 +26,7 @@ export function joinDeepSeekApiUrl(baseUrl: string, chatPath?: string): string {
   return `${normalizedBase}${path}`;
 }
 
+/** 将内部 Message 转为 DeepSeek API 格式，处理 tool_calls / tool_call_id 映射。 */
 function toDeepSeekMessage(message: Message): Record<string, unknown> {
   const payload: Record<string, unknown> = {
     role: message.role,
@@ -42,6 +44,10 @@ function toDeepSeekMessage(message: Message): Record<string, unknown> {
     }));
   }
 
+  if (message.role === "assistant" && message.reasoningContent) {
+    payload.reasoning_content = message.reasoningContent;
+  }
+
   if (message.role === "tool") {
     payload.tool_call_id = message.toolCallId;
     if (message.name) {
@@ -52,6 +58,7 @@ function toDeepSeekMessage(message: Message): Record<string, unknown> {
   return payload;
 }
 
+/** 将内部 ToolDefinition 列表转为 DeepSeek function-calling tools 数组。 */
 function toDeepSeekTools(
   tools: ToolDefinition[] | undefined,
 ): Array<Record<string, unknown>> | undefined {
@@ -74,7 +81,7 @@ export function buildDeepSeekChatBody(
   request: UnifiedChatRequest,
 ): Record<string, unknown> {
   const body: Record<string, unknown> = {
-    model: request.model || profile.model,
+    model: request.model || profile.models[0],
     messages: request.messages.map(toDeepSeekMessage),
     stream: request.stream ?? true,
   };
@@ -95,9 +102,18 @@ export function buildDeepSeekChatBody(
     body.tool_choice = request.toolChoice ?? "auto";
   }
 
+  if (request.thinking) {
+    body.thinking = { type: request.thinking };
+  }
+
+  if (request.reasoningEffort) {
+    body.reasoning_effort = request.reasoningEffort;
+  }
+
   return body;
 }
 
+/** 构建 DeepSeek API 请求头（Content-Type、Accept、Authorization）。 */
 export function buildDeepSeekChatHeaders(
   profile: AiProviderProfile,
 ): Record<string, string> {
@@ -112,6 +128,7 @@ export function buildDeepSeekChatHeaders(
   return headers;
 }
 
+/** 解析单条 DeepSeek SSE data 行，处理 reasoning_content 与增量 tool_calls 合并。 */
 function parseDeepSeekSsePayload(
   payload: string,
   toolCalls: Map<number, ToolCall>,
@@ -120,6 +137,7 @@ function parseDeepSeekSsePayload(
     choices?: Array<{
       delta?: {
         content?: string | null;
+        reasoning_content?: string | null;
         tool_calls?: Array<{
           index?: number;
           id?: string;
@@ -144,6 +162,9 @@ function parseDeepSeekSsePayload(
   const chunks: StreamChunk[] = [];
   const choice = json.choices?.[0];
   const delta = choice?.delta;
+  if (delta?.reasoning_content) {
+    chunks.push({ type: "thinking-delta", text: delta.reasoning_content });
+  }
   if (delta?.content) {
     chunks.push({ type: "text-delta", text: delta.content });
   }
@@ -159,7 +180,7 @@ function parseDeepSeekSsePayload(
       current.id = toolDelta.id;
     }
     if (toolDelta.function?.name) {
-      current.name += toolDelta.function.name;
+      current.name = toolDelta.function.name;
     }
     if (toolDelta.function?.arguments) {
       current.arguments += toolDelta.function.arguments;
@@ -176,6 +197,7 @@ function parseDeepSeekSsePayload(
   return chunks;
 }
 
+/** DeepSeek 流式对话：校验参数 → POST SSE → 逐行解析 → yield StreamChunk。 */
 async function* streamDeepSeekChat(
   profile: AiProviderProfile,
   request: UnifiedChatRequest,
@@ -185,7 +207,7 @@ async function* streamDeepSeekChat(
     yield { type: "error", error: "请先填写 DeepSeek Base URL。" };
     return;
   }
-  if (!profile.model.trim() && !request.model.trim()) {
+  if (!profile.models[0]?.trim() && !request.model.trim()) {
     yield { type: "error", error: "请先填写模型名称。" };
     return;
   }
@@ -244,11 +266,12 @@ async function* streamDeepSeekChat(
   }
 }
 
+/** 发送一次最小补全请求以验证 DeepSeek API 连通性。 */
 async function testDeepSeekConnection(
   profile: AiProviderProfile,
   signal?: AbortSignal,
 ): Promise<ProviderTestResult> {
-  if (!profile.baseUrl.trim() || !profile.apiKey.trim() || !profile.model.trim()) {
+  if (!profile.baseUrl.trim() || !profile.apiKey.trim() || !profile.models[0]?.trim()) {
     return { ok: false, message: "请填写 Base URL、API Key 与模型名称。" };
   }
 
@@ -262,7 +285,7 @@ async function testDeepSeekConnection(
       method: "POST",
       headers: buildDeepSeekChatHeaders(profile),
       body: JSON.stringify({
-        model: profile.model,
+        model: profile.models[0],
         messages: [{ role: "user", content: "ping" }],
         max_tokens: 1,
         stream: false,

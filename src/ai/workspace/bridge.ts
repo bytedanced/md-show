@@ -11,6 +11,8 @@ import {
   DEFAULT_MAX_DIR_ENTRIES,
   DEFAULT_MAX_READ_CHARS,
   DEFAULT_MAX_READ_LINES,
+  DEFAULT_MAX_SEARCH_HITS_PER_FILE,
+  DEFAULT_MAX_SEARCH_TOTAL_HITS,
   IGNORED_DIRECTORY_NAMES,
 } from "./limits";
 
@@ -39,6 +41,30 @@ export interface WorkspaceReadResult {
   endLine: number;
 }
 
+export interface WorkspaceSearchHit {
+  /** 1-based 行号 */
+  line: number;
+  name: string;
+  /** 工作区内 portable 路径（正斜杠） */
+  path: string;
+  preview: string;
+}
+
+export interface WorkspaceSearchOptions {
+  /** 大小写不敏感的关键字；空串返回空数组 */
+  query: string;
+  /** 单文件最多返回的命中行数；默认 10 */
+  maxHitsPerFile?: number;
+  /** 整体最多返回的命中条数；默认 80 */
+  maxTotalHits?: number;
+}
+
+export interface WorkspaceSearchResultDto {
+  query: string;
+  hits: WorkspaceSearchHit[];
+  truncated: boolean;
+}
+
 /**
  * AI 工具访问工作区的唯一出口。
  * 实现由应用层注入 FS / 打开标签快照，工具层禁止直接调用 Tauri。
@@ -51,6 +77,9 @@ export interface WorkspaceBridge {
     path: string,
     options?: WorkspaceReadOptions,
   ): Promise<WorkspaceReadResult>;
+  searchWorkspace(
+    options: WorkspaceSearchOptions,
+  ): Promise<WorkspaceSearchResultDto>;
 }
 
 export interface WorkspaceFsEntry {
@@ -60,6 +89,7 @@ export interface WorkspaceFsEntry {
   isSymlink?: boolean;
 }
 
+/** 创建 WorkspaceBridge 所需的依赖注入，由应用层提供真实的 FS 与标签页状态。 */
 export interface WorkspaceBridgeDeps {
   workspaceRoot: string | null;
   openTabs: OpenTabSnapshot[];
@@ -67,8 +97,14 @@ export interface WorkspaceBridgeDeps {
   readTextFile: (path: string) => Promise<string>;
   /** 拼接子路径，返回可交给 FS 的原生路径 */
   joinPath: (base: string, name: string) => Promise<string>;
+  /**
+   * 在工作区内做大小写不敏感的全文搜索。
+   * 应用层复用 useWorkspaceManager 的 searchWorkspace（已处理工作区扫描）。
+   */
+  search: (query: string) => Promise<WorkspaceSearchHit[]>;
 }
 
+/** 大小写不敏感地比较两个路径是否指向同一文件。 */
 function pathsEqual(left: string, right: string): boolean {
   return normalizePath(left).toLowerCase() === normalizePath(right).toLowerCase();
 }
@@ -82,6 +118,7 @@ export function toFsPath(portablePath: string): string {
   return normalized;
 }
 
+/** 在已打开标签页列表中查找匹配指定路径的标签（大小写不敏感）。 */
 function findOpenTab(
   openTabs: OpenTabSnapshot[],
   portablePath: string,
@@ -93,6 +130,7 @@ function findOpenTab(
   );
 }
 
+/** 按行切片读取：从 offset 行起取 limit 行，超出 maxChars 字符则截断。 */
 function sliceLines(
   content: string,
   offset: number,
@@ -225,6 +263,64 @@ export function createWorkspaceBridge(
         source: "disk",
         ...sliced,
       };
+    },
+
+    async searchWorkspace(options) {
+      const query = options.query.trim();
+      if (!query) {
+        return { query: "", hits: [], truncated: false };
+      }
+      if (!deps.workspaceRoot?.trim()) {
+        throw new PathPolicyError(
+          "no-workspace",
+          "未打开工作区，无法搜索。",
+        );
+      }
+
+      const maxPerFile =
+        options.maxHitsPerFile ?? DEFAULT_MAX_SEARCH_HITS_PER_FILE;
+      const maxTotal =
+        options.maxTotalHits ?? DEFAULT_MAX_SEARCH_TOTAL_HITS;
+
+      let raw: WorkspaceSearchHit[];
+      try {
+        raw = await deps.search(query);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        throw new PathPolicyError("invalid-path", `搜索失败：${message}`);
+      }
+
+      const grouped = new Map<string, WorkspaceSearchHit[]>();
+      const order: string[] = [];
+      for (const hit of raw) {
+        let bucket = grouped.get(hit.path);
+        if (!bucket) {
+          bucket = [];
+          grouped.set(hit.path, bucket);
+          order.push(hit.path);
+        }
+        if (bucket.length < maxPerFile) {
+          bucket.push(hit);
+        }
+      }
+
+      const hits: WorkspaceSearchHit[] = [];
+      let truncated = false;
+      for (const path of order) {
+        const bucket = grouped.get(path);
+        if (!bucket) continue;
+        for (const hit of bucket) {
+          if (hits.length >= maxTotal) {
+            truncated = true;
+            break;
+          }
+          hits.push(hit);
+        }
+        if (truncated) break;
+      }
+
+      const bucketTruncated = raw.length > 0 && hits.length < raw.length;
+      return { query, hits, truncated: truncated || bucketTruncated };
     },
   };
 }

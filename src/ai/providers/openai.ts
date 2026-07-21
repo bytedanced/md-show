@@ -26,6 +26,17 @@ export function joinOpenAiApiUrl(baseUrl: string, chatPath?: string): string {
 }
 
 function toOpenAiMessage(message: Message): Record<string, unknown> {
+  if (message.role === "user" && message.images?.length) {
+    const content: Record<string, unknown>[] = message.images.map((img) => ({
+      type: "image_url",
+      image_url: { url: img },
+    }));
+    if (message.content.trim()) {
+      content.push({ type: "text", text: message.content });
+    }
+    return { role: "user", content };
+  }
+
   const payload: Record<string, unknown> = {
     role: message.role,
     content: message.content,
@@ -40,6 +51,10 @@ function toOpenAiMessage(message: Message): Record<string, unknown> {
         arguments: call.arguments,
       },
     }));
+  }
+
+  if (message.role === "assistant" && message.reasoningContent) {
+    payload.reasoning_content = message.reasoningContent;
   }
 
   if (message.role === "tool") {
@@ -73,7 +88,7 @@ export function buildOpenAiChatBody(
   request: UnifiedChatRequest,
 ): Record<string, unknown> {
   const body: Record<string, unknown> = {
-    model: request.model || profile.model,
+    model: request.model || profile.models[0],
     messages: request.messages.map(toOpenAiMessage),
     stream: request.stream ?? true,
   };
@@ -92,6 +107,14 @@ export function buildOpenAiChatBody(
   if (tools) {
     body.tools = tools;
     body.tool_choice = request.toolChoice ?? "auto";
+  }
+
+  if (request.thinking) {
+    body.thinking = { type: request.thinking };
+  }
+
+  if (request.reasoningEffort) {
+    body.reasoning_effort = request.reasoningEffort;
   }
 
   return body;
@@ -119,6 +142,7 @@ function parseOpenAiSsePayload(
     choices?: Array<{
       delta?: {
         content?: string | null;
+        reasoning_content?: string | null;
         tool_calls?: Array<{
           index?: number;
           id?: string;
@@ -143,6 +167,9 @@ function parseOpenAiSsePayload(
   const chunks: StreamChunk[] = [];
   const choice = json.choices?.[0];
   const delta = choice?.delta;
+  if (delta?.reasoning_content) {
+    chunks.push({ type: "thinking-delta", text: delta.reasoning_content });
+  }
   if (delta?.content) {
     chunks.push({ type: "text-delta", text: delta.content });
   }
@@ -158,7 +185,7 @@ function parseOpenAiSsePayload(
       current.id = toolDelta.id;
     }
     if (toolDelta.function?.name) {
-      current.name += toolDelta.function.name;
+      current.name = toolDelta.function.name;
     }
     if (toolDelta.function?.arguments) {
       current.arguments += toolDelta.function.arguments;
@@ -184,7 +211,7 @@ async function* streamOpenAiChat(
     yield { type: "error", error: "请先填写 OpenAI Base URL。" };
     return;
   }
-  if (!profile.model.trim() && !request.model.trim()) {
+  if (!profile.models[0]?.trim() && !request.model.trim()) {
     yield { type: "error", error: "请先填写模型名称。" };
     return;
   }
@@ -247,7 +274,7 @@ async function testOpenAiConnection(
   profile: AiProviderProfile,
   signal?: AbortSignal,
 ): Promise<ProviderTestResult> {
-  if (!profile.baseUrl.trim() || !profile.apiKey.trim() || !profile.model.trim()) {
+  if (!profile.baseUrl.trim() || !profile.apiKey.trim() || !profile.models[0]?.trim()) {
     return { ok: false, message: "请填写 Base URL、API Key 与模型名称。" };
   }
 
@@ -261,7 +288,7 @@ async function testOpenAiConnection(
       method: "POST",
       headers: buildOpenAiChatHeaders(profile),
       body: JSON.stringify({
-        model: profile.model,
+        model: profile.models[0],
         messages: [{ role: "user", content: "ping" }],
         max_tokens: 1,
         stream: false,
