@@ -6,6 +6,7 @@ import {
   getProfileModels,
   getProviderAdapter,
   isProfileConfigured,
+  listAllModes,
   resolveActiveModel,
   withResolvedModel,
   type AiProviderProfile,
@@ -117,7 +118,7 @@ function updateActiveProfile(
   };
 }
 
-function AiSettingsForm({
+export function AiSettingsForm({
   aiSettings,
   onAiSettingsChange,
 }: {
@@ -176,6 +177,23 @@ function AiSettingsForm({
       }
     };
   }, [onAiSettingsChange]);
+
+  // 当外部切换 active profile 时，同步 draft（丢弃未保存的 debounce 编辑）
+  const prevActiveProfileIdRef = useRef(aiSettings.activeProfileId);
+  useEffect(() => {
+    if (prevActiveProfileIdRef.current !== aiSettings.activeProfileId) {
+      prevActiveProfileIdRef.current = aiSettings.activeProfileId;
+      clearPersistTimer();
+      draftRef.current = aiSettings;
+      setDraft(aiSettings);
+      const nextProfile = getActiveProfile(aiSettings);
+      setModelKeys(
+        createModelSlotKeys(nextProfile ? listProfileModels(nextProfile).length : 0),
+      );
+      setShowKey(false);
+      setTestMessage(null);
+    }
+  }, [aiSettings, clearPersistTimer]);
 
   const profile = getActiveProfile(draft);
   if (!profile) {
@@ -283,70 +301,6 @@ function AiSettingsForm({
 
   return (
     <div className="settings-ai-form">
-      <label className="settings-field settings-field--checkbox">
-        <input
-          checked={draft.enabled}
-          onChange={(event) =>
-            persistNow({
-              ...draft,
-              enabled: event.target.checked,
-            })
-          }
-          type="checkbox"
-        />
-        <span>启用 AI</span>
-      </label>
-
-      <label className="settings-field settings-field--checkbox">
-        <input
-          checked={draft.debug}
-          onChange={(event) =>
-            persistNow({
-              ...draft,
-              debug: event.target.checked,
-            })
-          }
-          type="checkbox"
-        />
-        <span>调试模式</span>
-      </label>
-      <small className="settings-ai-form__debug-hint">
-        开启后在 AI 面板查看请求消息拼装结果（不含 API Key）。
-      </small>
-
-      <label className="settings-field settings-field--checkbox">
-        <input
-          checked={draft.showToolCalls}
-          onChange={(event) =>
-            persistNow({
-              ...draft,
-              showToolCalls: event.target.checked,
-            })
-          }
-          type="checkbox"
-        />
-        <span>展示工具调用卡片</span>
-      </label>
-      <small className="settings-ai-form__debug-hint">
-        Agent 模式下显示 list_dir / read_file / search_workspace 等工具的调用详情（参数与返回），可折叠。关闭时仅在气泡内嵌简短标记。
-      </small>
-
-      <label className="settings-field">
-        <span>默认模式</span>
-        <select
-          onChange={(event) =>
-            persistNow({
-              ...draft,
-              defaultMode: event.target.value as AiSettings["defaultMode"],
-            })
-          }
-          value={draft.defaultMode === "agent-edit" ? "agent-ask" : draft.defaultMode}
-        >
-          <option value="chat">Chat</option>
-          <option value="agent-ask">Agent Ask</option>
-        </select>
-      </label>
-
       <label className="settings-field">
         <span>供应商模板</span>
         <select
@@ -605,7 +559,7 @@ export function SettingsDialog({
                   <strong>大纲</strong>：按标题跳转当前文档位置。
                 </li>
                 <li>
-                  <strong>AI</strong>：右侧对话面板（顶栏 AI 按钮开关）；在「设置 → AI」中配置供应商。
+                  <strong>AI</strong>：右侧对话面板（顶栏 AI 按钮开关）；在 AI 面板顶部打开「智能体配置」管理供应商、模型与工具模式。
                 </li>
               </ul>
             </section>
@@ -681,11 +635,73 @@ export function SettingsDialog({
               <small>样式将自动保存，并应用于预览和 HTML 导出。</small>
             </label>
           </div>
-        ) : isOpen ? (
-          <AiSettingsForm
-            aiSettings={aiSettings}
-            onAiSettingsChange={onAiSettingsChange}
-          />
+        ) : tab === "ai" ? (
+          <div className="settings-ai-form">
+            <label className="settings-field settings-field--checkbox">
+              <input
+                checked={aiSettings.enabled}
+                onChange={(event) =>
+                  onAiSettingsChange({
+                    ...aiSettings,
+                    enabled: event.target.checked,
+                  })
+                }
+                type="checkbox"
+              />
+              <span>启用 AI</span>
+            </label>
+
+            <label className="settings-field settings-field--checkbox">
+              <input
+                checked={aiSettings.debug}
+                onChange={(event) =>
+                  onAiSettingsChange({
+                    ...aiSettings,
+                    debug: event.target.checked,
+                  })
+                }
+                type="checkbox"
+              />
+              <span>调试模式</span>
+            </label>
+            <small className="settings-ai-form__debug-hint">
+              开启后在 AI 面板查看请求消息拼装结果（不含 API Key）。
+            </small>
+
+            <label className="settings-field settings-field--checkbox">
+              <input
+                checked={aiSettings.showToolCalls}
+                onChange={(event) =>
+                  onAiSettingsChange({
+                    ...aiSettings,
+                    showToolCalls: event.target.checked,
+                  })
+                }
+                type="checkbox"
+              />
+              <span>展示工具调用卡片</span>
+            </label>
+            <small className="settings-ai-form__debug-hint">
+              Agent 模式下显示 list_dir / read_file / search_workspace 等工具的调用详情（参数与返回），可折叠。关闭时仅在气泡内嵌简短标记。
+            </small>
+
+            <label className="settings-field">
+              <span>默认模式</span>
+              <select
+                onChange={(event) =>
+                  onAiSettingsChange({
+                    ...aiSettings,
+                    defaultMode: event.target.value,
+                  })
+                }
+                value={aiSettings.defaultMode}
+              >
+                {listAllModes(aiSettings.customModes).map((m) => (
+                  <option key={m.id} value={m.id}>{m.label}</option>
+                ))}
+              </select>
+            </label>
+          </div>
         ) : null}
       </div>
 

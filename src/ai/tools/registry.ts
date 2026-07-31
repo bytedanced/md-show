@@ -1,4 +1,4 @@
-import type { AiMode } from "../types";
+import type { CustomMode } from "../types";
 import { toolsForMode } from "../agent/modes";
 import type { ToolContext, ToolHandler } from "./types";
 import { toToolDefinition } from "./types";
@@ -26,9 +26,12 @@ export function clearTools(): void {
   handlers.clear();
 }
 
-/** 按模式过滤已注册工具；A0 默认无注册，返回空数组。 */
-export function resolveToolsForMode(mode: AiMode): ToolDefinition[] {
-  const allowed = new Set(toolsForMode(mode));
+/** 按模式过滤已注册工具，支持自定义模式。 */
+export function resolveToolsForMode(
+  mode: string,
+  customModes?: readonly CustomMode[],
+): ToolDefinition[] {
+  const allowed = new Set(toolsForMode(mode, customModes));
   return listTools()
     .filter((handler) => allowed.has(handler.name))
     .map(toToolDefinition);

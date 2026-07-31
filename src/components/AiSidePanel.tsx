@@ -12,6 +12,7 @@ interface AiSidePanelProps {
   onClose: () => void;
   onDismissActiveDocument: () => void;
   onInsert: (text: string) => void;
+  onOpenAgentConfig: () => void;
   onOpenSettings: () => void;
   onRemoveSnippet: (id: string) => void;
   onReplace: (text: string) => void;
@@ -29,6 +30,7 @@ export function AiSidePanel({
   onClose,
   onDismissActiveDocument,
   onInsert,
+  onOpenAgentConfig,
   onOpenSettings,
   onRemoveSnippet,
   onReplace,
@@ -114,6 +116,7 @@ export function AiSidePanel({
           onAiSettingsChange={onAiSettingsChange}
           onDismissActiveDocument={onDismissActiveDocument}
           onInsert={onInsert}
+          onOpenAgentConfig={onOpenAgentConfig}
           onOpenSettings={onOpenSettings}
           onRemoveSnippet={onRemoveSnippet}
           onReplace={onReplace}

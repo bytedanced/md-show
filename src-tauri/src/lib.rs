@@ -4,8 +4,12 @@ use std::{
     path::Path,
 };
 
+use tauri::Manager;
 use walkdir::WalkDir;
 use zip::{write::SimpleFileOptions, CompressionMethod, ZipWriter};
+
+mod mcp_bridge;
+use mcp_bridge::McpState;
 
 #[tauri::command]
 fn export_document_package(
@@ -72,7 +76,19 @@ pub fn run() {
         .plugin(tauri_plugin_persisted_scope::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![export_document_package])
+        .setup(|app| {
+            app.manage(McpState::new());
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            export_document_package,
+            mcp_bridge::mcp_connect,
+            mcp_bridge::mcp_disconnect,
+            mcp_bridge::mcp_list_all_tools,
+            mcp_bridge::mcp_call_tool,
+            mcp_bridge::mcp_health_check,
+            mcp_bridge::mcp_shutdown_all,
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

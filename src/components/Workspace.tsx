@@ -51,6 +51,7 @@ function readSplitRatio(): number {
 interface WorkspaceProps {
   activeTabId: string;
   content: string;
+  contentVersion: number;
   customCss: string;
   filePath: string | null;
   onActivateTab: (tabId: string) => void;
@@ -69,6 +70,7 @@ interface WorkspaceProps {
 export function Workspace({
   activeTabId,
   content,
+  contentVersion,
   customCss,
   filePath,
   onActivateTab,
@@ -468,6 +470,7 @@ export function Workspace({
           >
             <div className="editor-surface">
               <MarkdownEditor
+                key={contentVersion}
                 content={content}
                 onChange={onContentChange}
                 onEditorView={handleEditorView}

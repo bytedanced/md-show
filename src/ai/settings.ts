@@ -1,11 +1,13 @@
 import {
   createProfileId,
   PROVIDER_ADAPTER_IDS,
-  type AiMode,
   type ConfirmPolicy,
+  type CustomMode,
   type Message,
   type ProviderAdapterId,
 } from "./types";
+import type { McpServerConfig } from "./mcp/types";
+import { createDefaultMcpServerConfig } from "./mcp/types";
 
 export function createSessionId(): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
@@ -40,10 +42,14 @@ export interface AiSettings {
   showToolCalls: boolean;
   activeProfileId: string;
   activeModel?: string;
-  defaultMode: AiMode;
+  defaultMode: string;
   confirmPolicy: ConfirmPolicy;
   maxToolRounds: number;
   profiles: AiProviderProfile[];
+  /** 用户自定义模式列表。 */
+  customModes: CustomMode[];
+  /** MCP 外部工具服务器配置列表。 */
+  mcpServers: McpServerConfig[];
 }
 
 /** 预设供应商模板（不含 API Key，用户填写后生成完整 Profile）。 */
@@ -93,13 +99,6 @@ export const PROVIDER_TEMPLATES: readonly ProviderTemplate[] = [
     models: [],
   },
   {
-    id: "doubao-sdk",
-    name: "火山豆包 SDK 版",
-    adapter: "doubao-sdk",
-    baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
-    models: [],
-  },
-  {
     id: "ollama",
     name: "Ollama",
     adapter: "ollama",
@@ -145,6 +144,8 @@ export function createDefaultAiSettings(): AiSettings {
     confirmPolicy: "always",
     maxToolRounds: DEFAULT_MAX_TOOL_ROUNDS,
     profiles: [profile],
+    customModes: [],
+    mcpServers: [],
   };
 }
 
@@ -153,8 +154,69 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function isAiMode(value: unknown): value is AiMode {
+function isBuiltInMode(value: unknown): value is string {
   return value === "chat" || value === "agent-ask" || value === "agent-edit";
+}
+
+function isKnownMode(value: unknown, customModes: CustomMode[]): value is string {
+  if (typeof value !== "string") return false;
+  if (isBuiltInMode(value)) return true;
+  return customModes.some((cm) => cm.id === value);
+}
+
+function parseCustomModes(raw: unknown): CustomMode[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((item): item is CustomMode => {
+      if (!isRecord(item)) return false;
+      return (
+        typeof item.id === "string" && item.id.length > 0 &&
+        typeof item.name === "string" && item.name.trim().length > 0 &&
+        Array.isArray(item.toolNames) &&
+        item.toolNames.every((t: unknown) => typeof t === "string") &&
+        typeof item.systemPrompt === "string" &&
+        typeof item.write === "boolean"
+      );
+    })
+    .filter((item, index, arr) => arr.findIndex((x) => x.id === item.id) === index);
+}
+
+function parseMcpServers(raw: unknown): McpServerConfig[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((item): item is McpServerConfig => {
+    if (!isRecord(item)) return false;
+    return (
+      typeof item.id === "string" && item.id.length > 0 &&
+      typeof item.name === "string" &&
+      (item.transport === "http" || item.transport === "stdio")
+    );
+  }).map((item) => {
+    const config = createDefaultMcpServerConfig();
+    config.id = item.id;
+    config.name = item.name;
+    config.enabled = item.enabled === true;
+    config.transport = item.transport;
+    if (typeof item.url === "string") {
+      config.url = item.url;
+    }
+    if (isRecord(item.headers)) {
+      const headers: Record<string, string> = {};
+      for (const [k, v] of Object.entries(item.headers)) {
+        if (typeof v === "string") headers[k] = v;
+      }
+      config.headers = headers;
+    }
+    if (typeof item.timeoutMs === "number") {
+      config.timeoutMs = item.timeoutMs;
+    }
+    if (typeof item.command === "string") {
+      config.command = item.command;
+    }
+    if (Array.isArray(item.args)) {
+      config.args = item.args.filter((a): a is string => typeof a === "string");
+    }
+    return config;
+  });
 }
 
 function isConfirmPolicy(value: unknown): value is ConfirmPolicy {
@@ -250,6 +312,9 @@ export function normalizeAiSettings(raw: unknown): AiSettings {
     return fallback;
   }
 
+  // 先解析自定义模式，以便校验 defaultMode 是否引用合法的自定义模式 ID
+  const customModes = parseCustomModes(raw.customModes);
+
   const activeProfileId =
     typeof raw.activeProfileId === "string" &&
     profiles.some((profile) => profile.id === raw.activeProfileId)
@@ -271,7 +336,9 @@ export function normalizeAiSettings(raw: unknown): AiSettings {
     showToolCalls: raw.showToolCalls === true,
     activeProfileId,
     activeModel,
-    defaultMode: isAiMode(raw.defaultMode) ? raw.defaultMode : "chat",
+    defaultMode: isKnownMode(raw.defaultMode, customModes)
+      ? (raw.defaultMode as string)
+      : "chat",
     confirmPolicy: isConfirmPolicy(raw.confirmPolicy)
       ? raw.confirmPolicy
       : "always",
@@ -280,6 +347,8 @@ export function normalizeAiSettings(raw: unknown): AiSettings {
         ? Math.floor(raw.maxToolRounds)
         : DEFAULT_MAX_TOOL_ROUNDS,
     profiles,
+    customModes,
+    mcpServers: parseMcpServers(raw.mcpServers),
   };
 }
 

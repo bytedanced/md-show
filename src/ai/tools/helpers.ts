@@ -44,6 +44,14 @@ export function readPositiveInt(
   return undefined;
 }
 
+export function readBool(
+  input: Record<string, unknown>,
+  key: string,
+): boolean | undefined {
+  const value = input[key];
+  return typeof value === "boolean" ? value : undefined;
+}
+
 export function catchToolError(error: unknown): ToolResult {
   if (error instanceof PathPolicyError) {
     return toolErr(error.message, error.code === "no-workspace" ? false : true);

@@ -56,8 +56,10 @@ export {
 } from "./types";
 export type {
   AiMode,
+  BuiltInMode,
   ConfirmPolicy,
   ContextSnippet,
+  CustomMode,
   DocumentContextInput,
   FileChange,
   JsonSchema,
@@ -78,11 +80,14 @@ export type {
 export { runAgentLoop } from "./agent/loop";
 export type { AgentEvent, AgentLoopOptions } from "./agent/loop";
 export {
+  getModeDefinition,
   isWriteMode,
+  listAllModes,
   modeLabel,
   toolChoiceForMode,
   toolsForMode,
 } from "./agent/modes";
+export type { ModeDefinition } from "./agent/modes";
 
 export {
   getProviderAdapter,
@@ -166,3 +171,34 @@ export {
   trustSession,
 } from "./safety/confirmPolicy";
 export type { ConfirmPolicyState, WriteDecision } from "./safety/confirmPolicy";
+
+export {
+  connectServer as mcpConnectServer,
+  disconnectServer as mcpDisconnectServer,
+  listAllTools as mcpListAllTools,
+  callTool as mcpCallTool,
+  healthCheck as mcpHealthCheck,
+  shutdownAll as mcpShutdownAll,
+} from "./mcp/bridge";
+export {
+  createDefaultMcpServerConfig,
+  createMcpServerId,
+} from "./mcp/types";
+export type {
+  McpDiscoveredTool,
+  McpServerConfig,
+  McpServerHealth,
+  McpServerStatus,
+} from "./mcp/types";
+export {
+  isMcpTool,
+  mcpTestConnection,
+  mcpDisconnectSingle,
+  mcpRefreshTools,
+  mcpShutdownAll as mcpShutdownAllManager,
+  mcpSyncFromConfig,
+  mcpToolDisplayName,
+  mcpToolName,
+  mcpToolSource,
+  getConnectedMcpServerIds,
+} from "./mcp/manager";

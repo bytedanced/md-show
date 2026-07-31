@@ -4,7 +4,6 @@ import { chatglmAdapter } from "./chatglm";
 import { customAdapter } from "./custom";
 import { deepseekAdapter } from "./deepseek";
 import { doubaoAdapter } from "./doubao";
-import { doubaoSdkAdapter } from "./doubao-sdk";
 import { ollamaAdapter } from "./ollama";
 import { openaiAdapter } from "./openai";
 import { openaiSdkAdapter } from "./openai-sdk";
@@ -18,7 +17,6 @@ const BUILTIN_ADAPTERS: readonly ProviderAdapter[] = [
   deepseekAdapter,
   chatglmAdapter,
   doubaoAdapter,
-  doubaoSdkAdapter,
   ollamaAdapter,
   customAdapter,
   anthropicAdapter,

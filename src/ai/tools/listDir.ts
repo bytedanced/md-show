@@ -27,18 +27,23 @@ export const listDirTool = defineTool({
     additionalProperties: false,
   },
   async execute(input, ctx) {
+    // 确保 WorkspaceBridge 已注入，否则无法访问文件系统
     if (!ctx.bridge) {
       return toolErr("未注入 WorkspaceBridge，无法列出目录。", false);
     }
 
     try {
+      // 解析输入参数，path 为空时默认当前工作区根目录
       const record = asRecord(input);
       const path = readString(record, "path")?.trim() || ".";
+      // 调用 bridge 获取目录子项列表
       const entries = await ctx.bridge.listDir(path);
+      // 将每个条目格式化为 [dir]/[file] 标记行
       const lines = entries.map((entry) => {
         const kind = entry.isDirectory ? "dir" : "file";
         return `- [${kind}] ${entry.name}\t${entry.path}`;
       });
+      // path 为 "." 时用 workspaceRoot 替换，让输出更直观
       const header = `directory: ${path === "." ? ctx.bridge.workspaceRoot ?? "." : path}`;
       const body =
         lines.length > 0

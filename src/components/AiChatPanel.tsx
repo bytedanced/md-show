@@ -6,19 +6,23 @@ import {
   getActiveProfile,
   getAllModelOptions,
   getActiveSession,
+  getModeDefinition,
   isProfileConfigured,
+  listAllModes,
   loadSessions,
+  modeLabel,
   resolveActiveModel,
   runAgentLoop,
   saveActiveSessionId,
   saveSessions,
   snippetDisplayName,
   snippetRangeLabel,
+  toolsForMode,
   withResolvedModel,
-  type AiMode,
   type AiSettings,
   type ChatSession,
   type ContextSnippet,
+  type FileChange,
   type Message,
   type ModelOption,
   type ReasoningEffort,
@@ -46,6 +50,7 @@ interface AiChatPanelProps {
   onAiSettingsChange: (settings: AiSettings) => void;
   onDismissActiveDocument: () => void;
   onInsert: (text: string) => void;
+  onOpenAgentConfig: () => void;
   onOpenSettings: () => void;
   onRemoveSnippet: (id: string) => void;
   onReplace: (text: string) => void;
@@ -76,18 +81,6 @@ const QUICK_PROMPTS = [
   "检查语法和表达",
 ];
 
-const ASK_SYSTEM_PROMPT =
-  "你是墨览 Markdown 写作助手，当前为 Agent Ask（只读）模式。需要了解工作区内容时，先使用工具再回答，可用工具：\n" +
-  "- search_workspace(query)：在工作区内全文搜索某关键字，返回命中文件路径、行号与行预览。用户问「某主题在哪些文档」时优先用它。\n" +
-  "- list_dir(path)：列出某目录下的子目录与文本文件。\n" +
-  "- read_file(path, offset?, limit?)：读取文件内容，已打开标签会优先返回未保存内容。\n" +
-  "引用时标明文件路径与行号。优先输出可直接粘贴的 Markdown。除非用户要求，不要解释过程。";
-
-/** 面板层将 agent-edit 降级为 agent-ask（edit 模式需后续安全机制就位后开启）。 */
-function resolvePanelMode(mode: AiMode): AiMode {
-  return mode === "agent-edit" ? "agent-ask" : mode;
-}
-
 /** AI 对话面板主组件：管理气泡列表、流式渲染、工具调用展示与用户操作。 */
 export function AiChatPanel({
   aiSettings,
@@ -95,11 +88,42 @@ export function AiChatPanel({
   onAiSettingsChange,
   onDismissActiveDocument,
   onInsert,
+  onOpenAgentConfig,
   onOpenSettings,
   onRemoveSnippet,
   onReplace,
   workspaceBridge,
 }: AiChatPanelProps) {
+  /** 从 Message[] 重建 ChatBubble，还原思考内容和工具调用信息。 */
+  const messageToBubble = (m: Message, allMsgs: Message[]): ChatBubble => {
+    if (m.role === "user") {
+      return { id: m.id, role: "user", content: m.content, images: m.images };
+    }
+    const blocks: BubbleBlock[] = [];
+    if (m.reasoningContent) {
+      blocks.push({ type: "thinking", text: m.reasoningContent, expanded: false });
+    }
+    if (m.toolCalls) {
+      for (const tc of m.toolCalls) {
+        const toolMsg = allMsgs.find((tm) => tm.role === "tool" && tm.toolCallId === tc.id);
+        const isError = toolMsg?.content?.startsWith('{"error"');
+        blocks.push({
+          type: "tool-call",
+          id: tc.id,
+          name: tc.name,
+          arguments: tc.arguments,
+          status: toolMsg ? (isError ? "error" : "ok") : "running",
+          result: toolMsg?.content,
+          expanded: false,
+        });
+      }
+    }
+    if (m.content) {
+      blocks.push({ type: "text", text: m.content });
+    }
+    return { id: m.id, role: "assistant", content: m.content, blocks: blocks.length > 0 ? blocks : undefined };
+  };
+
   const [input, setInput] = useState("");
   const [sessions, setSessions] = useState<ChatSession[]>(() => loadSessions());
   const [activeSessionId, setActiveSessionId] = useState<string>(() => {
@@ -112,12 +136,9 @@ export function AiChatPanel({
   const activeSession = sessions.find((s) => s.id === activeSessionId) ?? null;
   const [bubbles, setBubbles] = useState<ChatBubble[]>(() => {
     const msgs = activeSession?.messages ?? [];
-    return msgs.map((m) => {
-      if (m.role === "user") {
-        return { id: m.id, role: "user", content: m.content, images: m.images };
-      }
-      return { id: m.id, role: "assistant", content: m.content };
-    });
+    return msgs
+      .filter((m) => m.role === "user" || m.role === "assistant")
+      .map((m) => messageToBubble(m, msgs));
   });
   const [history, setHistory] = useState<Message[]>(() => activeSession?.messages ?? []);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -151,7 +172,15 @@ export function AiChatPanel({
     }
     return Array.from(groups.entries());
   }, [allModelOptions]);
-  const mode = resolvePanelMode(aiSettings.defaultMode);
+  const mode = aiSettings.defaultMode;
+  const modeHasTools = useMemo(
+    () => toolsForMode(mode, aiSettings.customModes).length > 0,
+    [mode, aiSettings.customModes],
+  );
+  const allModes = useMemo(
+    () => listAllModes(aiSettings.customModes),
+    [aiSettings.customModes],
+  );
   const hasWorkspace = Boolean(workspaceBridge.workspaceRoot);
   const hasSnippets = document.snippets.length > 0;
   const showActiveDocChip = document.includeActiveDocument && !hasSnippets;
@@ -196,9 +225,7 @@ export function AiChatPanel({
       },
       history: debouncedDebugSource.history,
       systemPrompt:
-        debouncedDebugSource.mode === "agent-ask"
-          ? ASK_SYSTEM_PROMPT
-          : undefined,
+        getModeDefinition(debouncedDebugSource.mode, aiSettings.customModes)?.systemPrompt,
       userText:
         debouncedDebugSource.input.trim() || "（输入框为空时的占位预览）",
     });
@@ -245,12 +272,9 @@ export function AiChatPanel({
     const msgs = session?.messages ?? [];
     setActiveSessionId(id);
     setHistory(msgs);
-    setBubbles(msgs.map((m) => {
-      if (m.role === "user") {
-        return { id: m.id, role: "user", content: m.content, images: m.images };
-      }
-      return { id: m.id, role: "assistant", content: m.content };
-    }));
+    setBubbles(msgs
+      .filter((m) => m.role === "user" || m.role === "assistant")
+      .map((m) => messageToBubble(m, msgs)));
   };
 
   const newSession = () => {
@@ -327,10 +351,10 @@ export function AiChatPanel({
     });
   };
 
-  const handleModeChange = (nextMode: AiMode) => {
+  const handleModeChange = (nextMode: string) => {
     onAiSettingsChange({
       ...aiSettings,
-      defaultMode: resolvePanelMode(nextMode),
+      defaultMode: nextMode,
     });
   };
 
@@ -389,8 +413,8 @@ export function AiChatPanel({
       return;
     }
 
-    if (mode === "agent-ask" && !hasWorkspace) {
-      setError("Agent Ask 需要先打开工作区，才能使用 list_dir / read_file。");
+    if (modeHasTools && !hasWorkspace) {
+      setError("当前模式需要先打开工作区，才能使用文件工具。");
       return;
     }
 
@@ -427,7 +451,7 @@ export function AiChatPanel({
       },
       history,
       images: images.length > 0 ? images : undefined,
-      systemPrompt: mode === "agent-ask" ? ASK_SYSTEM_PROMPT : undefined,
+      systemPrompt: getModeDefinition(mode, aiSettings.customModes)?.systemPrompt,
       userText: text,
     });
 
@@ -442,9 +466,10 @@ export function AiChatPanel({
     let assistantText = "";
     let inThinkingPhase = false;
     try {
-      const assistantMessage = await runAgentLoop(
+      const newMessages = await runAgentLoop(
         {
           mode,
+          customModes: aiSettings.customModes,
           profile: withResolvedModel(profile, activeModel),
           messages,
           signal: controller.signal,
@@ -456,6 +481,9 @@ export function AiChatPanel({
             openTabs: workspaceBridge.openTabs,
             activePath: document.path,
             bridge: workspaceBridge,
+            applyFileChange: async (change: FileChange) => {
+              await workspaceBridge.writeFile(change.path, change.after);
+            },
           },
         },
         (event) => {
@@ -562,7 +590,8 @@ export function AiChatPanel({
         },
       );
 
-      assistantText = assistantMessage.content || assistantText;
+      const lastAssistant = [...newMessages].reverse().find((m) => m.role === "assistant");
+      assistantText = lastAssistant?.content || assistantText;
       setBubbles((prev) =>
         prev.map((bubble) => {
           if (bubble.id !== assistantId) return bubble;
@@ -579,15 +608,7 @@ export function AiChatPanel({
           };
         }),
       );
-      setHistory((prev) => [
-        ...prev,
-        userMessage,
-        {
-          id: assistantMessage.id,
-          role: "assistant",
-          content: assistantText,
-        },
-      ]);
+      setHistory((prev) => [...prev, userMessage, ...newMessages]);
     } catch (sendError) {
       const message =
         sendError instanceof Error ? sendError.message : String(sendError);
@@ -813,6 +834,14 @@ export function AiChatPanel({
   return (
     <div className="ai-chat">
       <div className="ai-chat__sessions">
+        <button
+          className="ai-chat__session-new"
+          onClick={newSession}
+          title="新建会话"
+          type="button"
+        >
+          +
+        </button>
         {sessions.map((s) => (
           <div
             className={`ai-chat__session-tab${s.id === activeSessionId ? " is-active" : ""}`}
@@ -851,14 +880,6 @@ export function AiChatPanel({
             )}
           </div>
         ))}
-        <button
-          className="ai-chat__session-new"
-          onClick={newSession}
-          title="新建会话"
-          type="button"
-        >
-          +
-        </button>
       </div>
       <div className="ai-chat__messages" ref={listRef}>
         {bubbles.length === 0 && (
@@ -1066,21 +1087,34 @@ export function AiChatPanel({
         <div className="ai-chat__composer-footer">
           <div className="ai-chat__composer-meta">
             <label className="ai-chat__pill ai-chat__pill--mode" title="对话模式">
-              <span className="ai-chat__pill-label">{mode === "agent-ask" ? "Agent" : "Chat"}</span>
+              <span className="ai-chat__pill-label">
+                {modeLabel(mode, aiSettings.customModes)}
+              </span>
               <select
                 aria-label="选择对话模式"
                 className="ai-chat__pill-select"
                 disabled={isGenerating}
-                onChange={(event) => handleModeChange(event.target.value as AiMode)}
+                onChange={(event) => handleModeChange(event.target.value)}
                 value={mode}
               >
-                <option value="chat">Chat</option>
-                <option value="agent-ask">Agent</option>
+                {allModes.map((m) => (
+                  <option key={m.id} value={m.id}>{m.label}</option>
+                ))}
               </select>
               <span aria-hidden="true" className="ai-chat__pill-chevron">
                 <Icon name="chevron" size={12} />
               </span>
             </label>
+            <button
+              aria-label="配置智能体模式"
+              className="icon-button ai-chat__composer-tool"
+              disabled={isGenerating}
+              onClick={onOpenAgentConfig}
+              title="配置智能体模式"
+              type="button"
+            >
+              <Icon name="settings" size={14} />
+            </button>
             <label className="ai-chat__pill ai-chat__pill--mode" title="思考强度">
               <span className="ai-chat__pill-label">思考: {thinkingLevel === "disabled" ? "关闭" : thinkingLevel}</span>
               <select
@@ -1133,15 +1167,15 @@ export function AiChatPanel({
             <button
               aria-label={aiSettings.showToolCalls ? "折叠工具详情" : "展开工具详情"}
               aria-pressed={aiSettings.showToolCalls}
-              className={`ai-chat__pill ai-chat__pill--tool-toggle${aiSettings.showToolCalls ? " is-active" : ""}${mode !== "agent-ask" ? " is-muted" : ""}`}
-              disabled={mode !== "agent-ask"}
+              className={`ai-chat__pill ai-chat__pill--tool-toggle${aiSettings.showToolCalls ? " is-active" : ""}${!modeHasTools ? " is-muted" : ""}`}
+              disabled={!modeHasTools}
               onClick={() =>
                 onAiSettingsChange({
                   ...aiSettings,
                   showToolCalls: !aiSettings.showToolCalls,
                 })
               }
-              title={mode !== "agent-ask" ? "工具仅在 Agent 模式下可用" : undefined}
+              title={!modeHasTools ? "当前模式未启用任何工具" : undefined}
               type="button"
             >
               <span className="ai-chat__pill-label">工具</span>

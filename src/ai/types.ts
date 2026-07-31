@@ -1,5 +1,22 @@
-/** AI 运行模式：Chat 为无工具 Agent 的特例。 */
-export type AiMode = "chat" | "agent-ask" | "agent-edit";
+/** 预置模式标识，保留编译时字面量自动补全。 */
+export type BuiltInMode = "chat" | "agent-ask" | "agent-edit";
+
+/** AI 运行模式：内置固定模式或用户自定义模式 ID。 */
+export type AiMode = BuiltInMode | (string & {});
+
+/** 用户创建的自定义模式定义，持久化在 AiSettings 中。 */
+export interface CustomMode {
+  /** 唯一标识（UUID）。 */
+  id: string;
+  /** UI 展示名称。 */
+  name: string;
+  /** 从内置工具名中选取的子集。 */
+  toolNames: string[];
+  /** 自定义系统提示词（可空，空时回退到默认提示词）。 */
+  systemPrompt: string;
+  /** 是否允许工具修改工作区文件。 */
+  write: boolean;
+}
 
 /**
  * 每个供应商对应独立 Adapter 实现，互不复用请求拼装代码，便于后续协议分叉。
@@ -11,7 +28,6 @@ export type ProviderAdapterId =
   | "deepseek"
   | "chatglm"
   | "doubao"
-  | "doubao-sdk"
   | "ollama"
   | "custom"
   | "anthropic";
@@ -22,7 +38,6 @@ export const PROVIDER_ADAPTER_IDS: readonly ProviderAdapterId[] = [
   "deepseek",
   "chatglm",
   "doubao",
-  "doubao-sdk",
   "ollama",
   "custom",
   "anthropic",

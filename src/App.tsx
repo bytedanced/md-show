@@ -9,6 +9,7 @@ import {
   insertAtCursor,
   isDuplicateSnippet,
   loadAiSettings,
+  mcpSyncFromConfig,
   replaceSelection,
   saveAiSettings,
   snippetRangeLabel,
@@ -17,7 +18,7 @@ import {
   type OpenTabSnapshot,
 } from "./ai";
 import { join } from "@tauri-apps/api/path";
-import { readDir, readTextFile } from "@tauri-apps/plugin-fs";
+import { readDir, readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
 import { AppHeader } from "./components/AppHeader";
 import {
   CommandPalette,
@@ -35,6 +36,7 @@ import {
   SettingsDialog,
   type SettingsTab,
 } from "./components/SettingsDialog";
+import { AgentConfigPanel } from "./components/AgentConfigPanel";
 import { AiSidePanel } from "./components/AiSidePanel";
 import { Sidebar } from "./components/Sidebar";
 import { StatusBar } from "./components/StatusBar";
@@ -138,6 +140,7 @@ function App() {
   );
   const [aiPanelWidth, setAiPanelWidth] = useState(readAiPanelWidth);
   const [isAiPanelResizing, setIsAiPanelResizing] = useState(false);
+  const [isAgentConfigOpen, setIsAgentConfigOpen] = useState(false);
   const [editorSelection, setEditorSelection] = useState("");
   const [aiContextSnippets, setAiContextSnippets] = useState<ContextSnippet[]>(
     [],
@@ -337,14 +340,23 @@ function App() {
     tabs,
     togglePinnedWorkspace,
     updateContent,
+    updateTabByPath,
     wordCount,
     workspaceRoot,
     workspaceTree,
   } = useWorkspaceManager(notify);
 
+  const [mcpSyncVersion, setMcpSyncVersion] = useState(0);
+
   useEffect(() => {
     ensureBuiltinToolsRegistered();
   }, []);
+
+  useEffect(() => {
+    mcpSyncFromConfig(aiSettings.mcpServers).then(() => {
+      setMcpSyncVersion((v) => v + 1);
+    });
+  }, [aiSettings.mcpServers]);
 
   const openTabSnapshots = useMemo<OpenTabSnapshot[]>(
     () =>
@@ -371,6 +383,7 @@ function App() {
           }));
         },
         readTextFile,
+        writeTextFile,
         joinPath: (base, name) => join(base, name),
         search: (query) =>
           searchWorkspace(query).then((hits) =>
@@ -381,8 +394,9 @@ function App() {
               preview: hit.preview,
             })),
           ),
+        updateTabContent: updateTabByPath,
       }),
-    [openTabSnapshots, searchWorkspace, workspaceRoot],
+    [openTabSnapshots, searchWorkspace, workspaceRoot, updateTabByPath],
   );
 
   useEffect(() => {
@@ -882,83 +896,95 @@ function App() {
         theme={theme}
       />
       <div
-        className={`app-body${isAiPanelOpen ? " is-ai-open" : ""}${
-          isAiPanelResizing ? " is-ai-resizing" : ""
-        }`}
+        className={`app-body${isAiPanelOpen ? " is-ai-open" : ""}${isAiPanelResizing ? " is-ai-resizing" : ""
+          }`}
         ref={appBodyRef}
       >
-        <Sidebar
-          filePath={activeTab.path}
-          onCreateFile={requestCreateFile}
-          onCreateFolder={requestCreateFolder}
-          onDeleteEntry={deleteWorkspaceEntry}
-          onMoveEntry={(entry, targetDirectory) =>
-            void moveWorkspaceEntry(entry, targetDirectory)
-          }
-          onOpenEntry={(path) => void openPathInTab(path)}
-          onOpenSearchResult={(result) => {
-            void openPathInTab(result.path).then(() => revealLine(result.line));
-          }}
-          onOpenWorkspace={() => void openWorkspace()}
-          onOpenWorkspacePath={(path) => void openWorkspacePath(path)}
-          onOpenSettings={() => openSettings("help")}
-          onOutlineSelect={(item) => revealLine(item.line)}
-          onRenameEntry={requestRenameEntry}
-          onRemoveRecentWorkspace={removeRecentWorkspace}
-          onSearchWorkspace={searchWorkspace}
-          onTogglePinnedWorkspace={togglePinnedWorkspace}
-          outline={outline}
-          pinnedWorkspaces={pinnedWorkspaces}
-          recentWorkspaces={recentWorkspaces}
-          workspaceRoot={workspaceRoot}
-          workspaceTree={workspaceTree}
-        />
-        <Workspace
-          activeTabId={activeTabId}
-          content={activeTab.content}
-          customCss={customCss}
-          filePath={activeTab.path}
-          onActivateTab={setActiveTabId}
-          onCloseTab={closeTab}
-          onContentChange={updateContent}
-          onEditorViewChange={handleEditorViewChange}
-          onMediaNotice={notifyMedia}
-          onNotice={(message, title, isError = false) =>
-            notify({
-              message,
-              title,
-              tone: isError ? "error" : "info",
-            })
-          }
-          onNewTab={newDocument}
-          previewTheme={previewTheme}
-          revealRequest={revealRequest}
-          tabs={tabs}
-          theme={theme}
-        />
-        <AiSidePanel
-          aiSettings={aiSettings}
-          document={{
-            path: activeTab.path,
-            content: activeTab.content,
-            selection: editorSelection,
-            outline: outline.map((item) => item.text),
-            snippets: aiContextSnippets,
-            includeActiveDocument,
-          }}
-          isOpen={isAiPanelOpen}
-          isResizing={isAiPanelResizing}
-          onAiSettingsChange={handleAiSettingsChange}
-          onClose={() => setAiPanelOpen(false)}
-          onDismissActiveDocument={dismissActiveDocumentContext}
-          onInsert={insertAiText}
-          onOpenSettings={() => openSettings("ai")}
-          onRemoveSnippet={removeAiContextSnippet}
-          onReplace={replaceAiText}
-          onResizeStart={startAiPanelResize}
-          width={aiPanelWidth}
-          workspaceBridge={workspaceBridge}
-        />
+        {isAgentConfigOpen ? (
+          <AgentConfigPanel
+            aiSettings={aiSettings}
+            onAiSettingsChange={handleAiSettingsChange}
+            onClose={() => setIsAgentConfigOpen(false)}
+            mcpSyncVersion={mcpSyncVersion}
+          />
+        ) : (
+          <>
+            <Sidebar
+              filePath={activeTab.path}
+              onCreateFile={requestCreateFile}
+              onCreateFolder={requestCreateFolder}
+              onDeleteEntry={deleteWorkspaceEntry}
+              onMoveEntry={(entry, targetDirectory) =>
+                void moveWorkspaceEntry(entry, targetDirectory)
+              }
+              onOpenEntry={(path) => void openPathInTab(path)}
+              onOpenSearchResult={(result) => {
+                void openPathInTab(result.path).then(() => revealLine(result.line));
+              }}
+              onOpenWorkspace={() => void openWorkspace()}
+              onOpenWorkspacePath={(path) => void openWorkspacePath(path)}
+              onOpenSettings={() => openSettings("help")}
+              onOutlineSelect={(item) => revealLine(item.line)}
+              onRenameEntry={requestRenameEntry}
+              onRemoveRecentWorkspace={removeRecentWorkspace}
+              onSearchWorkspace={searchWorkspace}
+              onTogglePinnedWorkspace={togglePinnedWorkspace}
+              outline={outline}
+              pinnedWorkspaces={pinnedWorkspaces}
+              recentWorkspaces={recentWorkspaces}
+              workspaceRoot={workspaceRoot}
+              workspaceTree={workspaceTree}
+            />
+            <Workspace
+              activeTabId={activeTabId}
+              content={activeTab.content}
+              contentVersion={activeTab.contentVersion}
+              customCss={customCss}
+              filePath={activeTab.path}
+              onActivateTab={setActiveTabId}
+              onCloseTab={closeTab}
+              onContentChange={updateContent}
+              onEditorViewChange={handleEditorViewChange}
+              onMediaNotice={notifyMedia}
+              onNotice={(message, title, isError = false) =>
+                notify({
+                  message,
+                  title,
+                  tone: isError ? "error" : "info",
+                })
+              }
+              onNewTab={newDocument}
+              previewTheme={previewTheme}
+              revealRequest={revealRequest}
+              tabs={tabs}
+              theme={theme}
+            />
+            <AiSidePanel
+              aiSettings={aiSettings}
+              document={{
+                path: activeTab.path,
+                content: activeTab.content,
+                selection: editorSelection,
+                outline: outline.map((item) => item.text),
+                snippets: aiContextSnippets,
+                includeActiveDocument,
+              }}
+              isOpen={isAiPanelOpen}
+              isResizing={isAiPanelResizing}
+              onAiSettingsChange={handleAiSettingsChange}
+              onClose={() => setAiPanelOpen(false)}
+              onDismissActiveDocument={dismissActiveDocumentContext}
+              onInsert={insertAiText}
+              onOpenAgentConfig={() => setIsAgentConfigOpen(true)}
+              onOpenSettings={() => openSettings("ai")}
+              onRemoveSnippet={removeAiContextSnippet}
+              onReplace={replaceAiText}
+              onResizeStart={startAiPanelResize}
+              width={aiPanelWidth}
+              workspaceBridge={workspaceBridge}
+            />
+          </>
+        )}
       </div>
       <StatusBar
         content={activeTab.content}

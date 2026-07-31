@@ -7,7 +7,7 @@ import {
 import type { ToolContext } from "../tools/types";
 import {
   createMessageId,
-  type AiMode,
+  type CustomMode,
   type Message,
   type ReasoningEffort,
   type StreamChunk,
@@ -28,7 +28,8 @@ export type AgentEvent =
 
 /** 启动 Agent 循环所需的所有参数。 */
 export interface AgentLoopOptions {
-  mode: AiMode;
+  mode: string;
+  customModes?: readonly CustomMode[];
   profile: AiProviderProfile;
   messages: Message[];
   toolContext?: ToolContext;
@@ -118,7 +119,7 @@ async function collectProviderRound(
 export async function runAgentLoop(
   options: AgentLoopOptions,
   onEvent: (event: AgentEvent) => void | Promise<void> = () => undefined,
-): Promise<Message> {
+): Promise<Message[]> {
   const adapter = getProviderAdapter(options.profile.adapter);
   if (!adapter) {
     const error = `未找到 Provider Adapter：${options.profile.adapter}`;
@@ -128,7 +129,7 @@ export async function runAgentLoop(
 
   const signal = options.signal ?? new AbortController().signal;
   const maxToolRounds = options.maxToolRounds ?? DEFAULT_MAX_TOOL_ROUNDS;
-  const tools = resolveToolsForMode(options.mode);
+  const tools = resolveToolsForMode(options.mode, options.customModes);
   const toolContext: ToolContext = options.toolContext ?? {
     workspaceRoot: null,
     openTabs: [],
@@ -136,6 +137,7 @@ export async function runAgentLoop(
   };
 
   const messages = [...options.messages];
+  const initialCount = messages.length;
   let assistantMessage: Message = {
     id: createMessageId(),
     role: "assistant",
@@ -155,7 +157,7 @@ export async function runAgentLoop(
         messages,
         model: options.profile.models[0],
         tools: tools.length > 0 ? tools : undefined,
-        toolChoice: toolChoiceForMode(options.mode),
+        toolChoice: toolChoiceForMode(options.mode, options.customModes),
         stream: true,
         temperature: options.temperature ?? options.profile.temperature,
         maxTokens: options.maxTokens ?? options.profile.maxTokens,
@@ -185,7 +187,7 @@ export async function runAgentLoop(
 
     if (!roundResult.toolCalls.length) {
       await onEvent({ type: "done", message: assistantMessage });
-      return assistantMessage;
+      return messages.slice(initialCount);
     }
 
     if (round >= maxToolRounds) {
@@ -217,5 +219,5 @@ export async function runAgentLoop(
   }
 
   await onEvent({ type: "done", message: assistantMessage });
-  return assistantMessage;
+  return messages.slice(initialCount);
 }

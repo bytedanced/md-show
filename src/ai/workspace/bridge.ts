@@ -80,6 +80,8 @@ export interface WorkspaceBridge {
   searchWorkspace(
     options: WorkspaceSearchOptions,
   ): Promise<WorkspaceSearchResultDto>;
+  /** 将文本写入工作区内的文件（会校验路径安全性）。 */
+  writeFile(path: string, content: string): Promise<void>;
 }
 
 export interface WorkspaceFsEntry {
@@ -95,6 +97,7 @@ export interface WorkspaceBridgeDeps {
   openTabs: OpenTabSnapshot[];
   readDir: (path: string) => Promise<WorkspaceFsEntry[]>;
   readTextFile: (path: string) => Promise<string>;
+  writeTextFile: (path: string, content: string) => Promise<void>;
   /** 拼接子路径，返回可交给 FS 的原生路径 */
   joinPath: (base: string, name: string) => Promise<string>;
   /**
@@ -102,6 +105,8 @@ export interface WorkspaceBridgeDeps {
    * 应用层复用 useWorkspaceManager 的 searchWorkspace（已处理工作区扫描）。
    */
   search: (query: string) => Promise<WorkspaceSearchHit[]>;
+  /** 可选：写文件后同步更新对应标签页内容，避免标签页缓存覆写磁盘。 */
+  updateTabContent?: (path: string, content: string) => void;
 }
 
 /** 大小写不敏感地比较两个路径是否指向同一文件。 */
@@ -321,6 +326,15 @@ export function createWorkspaceBridge(
 
       const bucketTruncated = raw.length > 0 && hits.length < raw.length;
       return { query, hits, truncated: truncated || bucketTruncated };
+    },
+
+    async writeFile(rawPath, content) {
+      const portable = assertReadableTextPath(
+        deps.workspaceRoot,
+        resolveWorkspacePath(deps.workspaceRoot, rawPath),
+      );
+      await deps.writeTextFile(toFsPath(portable), content);
+      deps.updateTabContent?.(portable, content);
     },
   };
 }

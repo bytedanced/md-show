@@ -41,6 +41,7 @@ export interface WorkspaceLocation {
 
 export interface DocumentTab {
   content: string;
+  contentVersion: number;
   id: string;
   name: string;
   path: string | null;
@@ -91,6 +92,7 @@ const markdownFilters = [
 function createUntitledTab(): DocumentTab {
   return {
     content: "",
+    contentVersion: 0,
     id: crypto.randomUUID(),
     name: "未命名.md",
     path: null,
@@ -228,6 +230,10 @@ function loadSession(): StoredSession {
     if (saved) {
       const session = JSON.parse(saved) as StoredSession;
       if (session.tabs?.length) {
+        session.tabs = session.tabs.map((tab) => ({
+          ...tab,
+          contentVersion: tab.contentVersion ?? 0,
+        }));
         return session;
       }
     }
@@ -373,6 +379,21 @@ export function useWorkspaceManager(notify: Notify) {
     [activeTabId],
   );
 
+  /** 按路径更新标签页内容（用于 AI 工具写文件后同步标签页）。 */
+  const updateTabByPath = useCallback(
+    (targetPath: string, content: string) => {
+      const normalized = targetPath.replace(/\\/g, "/");
+      setTabs((prev) =>
+        prev.map((tab) =>
+          tab.path && tab.path.replace(/\\/g, "/") === normalized
+            ? { ...tab, content, savedContent: content, contentVersion: tab.contentVersion + 1 }
+            : tab,
+        ),
+      );
+    },
+    [],
+  );
+
   const openPathInTab = useCallback(
     async (path: string) => {
       const existingTab = tabs.find((tab) => tab.path === path);
@@ -385,6 +406,7 @@ export function useWorkspaceManager(notify: Notify) {
         const content = await readTextFile(path);
         const tab: DocumentTab = {
           content,
+          contentVersion: 0,
           id: crypto.randomUUID(),
           name: getFileName(path),
           path,
@@ -1005,6 +1027,7 @@ export function useWorkspaceManager(notify: Notify) {
     tabs,
     togglePinnedWorkspace,
     updateContent,
+    updateTabByPath,
     wordCount,
     workspaceRoot,
     workspaceTree,
