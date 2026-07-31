@@ -86,6 +86,80 @@ const QUICK_PROMPTS = [
   "检查语法和表达",
 ];
 
+function tryPrettyJson(text: string): { pretty: string; isJson: boolean } {
+  const trimmed = text.trim();
+  if (!trimmed) return { pretty: text, isJson: false };
+  const looksJson =
+    (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
+    (trimmed.startsWith("[") && trimmed.endsWith("]"));
+  if (!looksJson) return { pretty: text, isJson: false };
+  try {
+    const parsed = JSON.parse(trimmed);
+    return { pretty: JSON.stringify(parsed, null, 2), isJson: true };
+  } catch {
+    return { pretty: text, isJson: false };
+  }
+}
+
+function highlightJson(pretty: string): ReactNode[] {
+  const nodes: ReactNode[] = [];
+  const re =
+    /("(?:\\.|[^"\\])*"\s*:)|("(?:\\.|[^"\\])*")|\b(true|false|null)\b|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/g;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  let key = 0;
+  while ((match = re.exec(pretty)) !== null) {
+    if (match.index > lastIndex) {
+      nodes.push(pretty.slice(lastIndex, match.index));
+    }
+    if (match[1]) {
+      const colonIdx = match[1].lastIndexOf(":");
+      const keyPart = match[1].slice(0, colonIdx);
+      nodes.push(
+        <span className="json-key" key={key++}>
+          {keyPart}
+        </span>,
+      );
+      nodes.push(<span key={key++}>:</span>);
+    } else if (match[2]) {
+      nodes.push(
+        <span className="json-string" key={key++}>
+          {match[2]}
+        </span>,
+      );
+    } else if (match[3]) {
+      nodes.push(
+        <span className="json-keyword" key={key++}>
+          {match[3]}
+        </span>,
+      );
+    } else if (match[4]) {
+      nodes.push(
+        <span className="json-number" key={key++}>
+          {match[4]}
+        </span>,
+      );
+    }
+    lastIndex = re.lastIndex;
+  }
+  if (lastIndex < pretty.length) {
+    nodes.push(pretty.slice(lastIndex));
+  }
+  return nodes;
+}
+
+function PrettyPre({ text }: { text: string }) {
+  const { pretty, isJson } = tryPrettyJson(text);
+  if (!isJson) {
+    return <pre className="ai-chat__tool-call-pre">{text || "（无）"}</pre>;
+  }
+  return (
+    <pre className="ai-chat__tool-call-pre ai-chat__tool-call-pre--json">
+      <code>{highlightJson(pretty)}</code>
+    </pre>
+  );
+}
+
 /** 判断当前运行平台，供模型了解 shell 与路径分隔符差异。 */
 function detectPlatform(): "windows" | "macos" | "linux" {
   const ua = navigator.userAgent.toLowerCase();
@@ -167,6 +241,8 @@ export function AiChatPanel({
   const listRef = useRef<HTMLDivElement>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
   const isComposingRef = useRef(false);
+  const isAtBottomRef = useRef(true);
+  const forceScrollRef = useRef(false);
 
   const profile = getActiveProfile(aiSettings);
   const configured = profile ? isProfileConfigured(profile) : false;
@@ -269,10 +345,28 @@ export function AiChatPanel({
 
   useEffect(() => {
     const el = listRef.current;
-    if (el) {
+    if (!el) return;
+    const onScroll = () => {
+      const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+      isAtBottomRef.current = distance < 40;
+    };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+  }, []);
+
+  useEffect(() => {
+    const el = listRef.current;
+    if (!el) return;
+    if (forceScrollRef.current) {
+      forceScrollRef.current = false;
+      el.scrollTop = el.scrollHeight;
+      isAtBottomRef.current = true;
+      return;
+    }
+    if (isAtBottomRef.current) {
       el.scrollTop = el.scrollHeight;
     }
-  }, [bubbles, isGenerating]);
+  }, [bubbles]);
 
   useEffect(() => {
     return () => {
@@ -308,6 +402,7 @@ export function AiChatPanel({
     const msgs = session?.messages ?? [];
     setActiveSessionId(id);
     setHistory(msgs);
+    forceScrollRef.current = true;
     setBubbles(msgs
       .filter((m) => m.role === "user" || m.role === "assistant")
       .map((m) => messageToBubble(m, msgs)));
@@ -329,6 +424,7 @@ export function AiChatPanel({
     saveActiveSessionId(id);
     setActiveSessionId(id);
     setHistory([]);
+    forceScrollRef.current = true;
     setBubbles([]);
     setError(null);
   };
@@ -472,6 +568,7 @@ export function AiChatPanel({
       images: images.length > 0 ? images : undefined,
     };
     const assistantId = createMessageId();
+    forceScrollRef.current = true;
     setBubbles((prev) => [
       ...prev,
       userBubble,
@@ -736,7 +833,20 @@ export function AiChatPanel({
   /** 渲染气泡正文：生成中显示打字动画，助手消息用 Markdown 渲染。 */
   const renderBubbleContent = (bubble: ChatBubble) => {
     const hasBlocks = bubble.blocks && bubble.blocks.length > 0;
-    if (bubble.streaming && !bubble.content && !hasBlocks) {
+    const hasOnlyThinking = bubble.blocks?.every((b) => b.type === "thinking" || b.type === "tool-call") ?? false;
+    if (bubble.streaming && !bubble.content) {
+      if (hasBlocks) {
+        if (hasOnlyThinking) {
+          return (
+            <span className="ai-chat__typing" aria-label="正在思考">
+              <span />
+              <span />
+              <span />
+            </span>
+          );
+        }
+        return null;
+      }
       return (
         <span className="ai-chat__typing" aria-label="正在生成">
           <span />
@@ -747,7 +857,8 @@ export function AiChatPanel({
     }
 
     if (bubble.role === "assistant") {
-      return <AiMarkdown content={bubble.content || "…"} />;
+      if (!bubble.content) return null;
+      return <AiMarkdown content={bubble.content} />;
     }
 
     return (
@@ -859,14 +970,12 @@ export function AiChatPanel({
             <div className="ai-chat__tool-call-body">
               <div className="ai-chat__tool-call-section">
                 <div className="ai-chat__tool-call-section-label">参数</div>
-                <pre className="ai-chat__tool-call-pre">
-                  {block.arguments || "（无参数）"}
-                </pre>
+                <PrettyPre text={block.arguments} />
               </div>
               {block.result !== undefined && (
                 <div className="ai-chat__tool-call-section">
                   <div className="ai-chat__tool-call-section-label">结果</div>
-                  <pre className="ai-chat__tool-call-pre">{block.result}</pre>
+                  <PrettyPre text={block.result} />
                 </div>
               )}
             </div>
@@ -968,10 +1077,13 @@ export function AiChatPanel({
                   <Icon name="sparkles" size={14} />
                 </span>
                 <div className="ai-chat__message-main">
-                  {bubble.blocks?.map((block, index) =>
+                  {bubble.blocks?.filter((b) => b.type === "thinking").map((block, index) =>
                     renderBlock(bubble, block, index),
                   )}
                   <div className="ai-chat__bubble-body">{renderBubbleContent(bubble)}</div>
+                  {bubble.blocks?.filter((b) => b.type === "tool-call").map((block, index) =>
+                    renderBlock(bubble, block, index),
+                  )}
                   {bubble.content && !bubble.streaming && !bubble.error && (
                     <div className="ai-chat__bubble-actions">
                       <button

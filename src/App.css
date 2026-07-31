@@ -1904,17 +1904,40 @@ body.is-ai-panel-resizing .cm-editor {
 .ai-chat__tool-call-pre {
   margin: 0;
   padding: 6px 8px;
-  max-height: 240px;
+  max-height: 320px;
   overflow: auto;
   border-radius: 5px;
   background: var(--canvas);
   border: 1px solid var(--border);
   color: var(--text-strong);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 10px;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  word-break: break-word;
+  font-size: 11px;
+  line-height: 1.6;
+  white-space: pre;
+  tab-size: 2;
+}
+
+.ai-chat__tool-call-pre--json {
+  white-space: pre;
+  word-break: normal;
+}
+
+.ai-chat__tool-call-pre .json-key {
+  color: #7c3aed;
+  font-weight: 600;
+}
+
+.ai-chat__tool-call-pre .json-string {
+  color: #059669;
+}
+
+.ai-chat__tool-call-pre .json-number {
+  color: #d97706;
+}
+
+.ai-chat__tool-call-pre .json-keyword {
+  color: #dc2626;
+  font-weight: 600;
 }
 
 /* 紧凑标记 —— showToolCalls 关闭时显示在气泡顶部 */
