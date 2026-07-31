@@ -129,6 +129,20 @@ export function buildDocumentContext(
   const parts: string[] = [];
   let truncated = false;
 
+  // 注入工作区与环境信息，让模型知道 cwd 默认值、可用 shell、平台语法差异。
+  if (document.workspaceRoot) {
+    parts.push(`工作区根目录：${document.workspaceRoot}`);
+  }
+  if (document.platform) {
+    const shellHint =
+      document.platform === "windows"
+        ? "Windows（默认 shell: powershell，可用 cmd/bash 等切换）"
+        : document.platform === "macos"
+          ? "macOS（默认 shell: zsh）"
+          : "Linux（默认 shell: bash）";
+    parts.push(`运行平台：${shellHint}`);
+  }
+
   if (snippets.length > 0) {
     if (document.path) {
       parts.push(`当前打开文档：${document.path}`);

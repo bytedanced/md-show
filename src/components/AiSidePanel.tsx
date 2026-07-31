@@ -75,9 +75,8 @@ export function AiSidePanel({
           <button
             aria-label={aiSettings.debug ? "关闭调试模式" : "打开调试模式"}
             aria-pressed={aiSettings.debug}
-            className={`icon-button ai-side-panel__tool${
-              aiSettings.debug ? " is-active" : ""
-            }`}
+            className={`icon-button ai-side-panel__tool${aiSettings.debug ? " is-active" : ""
+              }`}
             onClick={() =>
               onAiSettingsChange({
                 ...aiSettings,
@@ -90,10 +89,10 @@ export function AiSidePanel({
             <Icon name="search" size={15} />
           </button>
           <button
-            aria-label="AI 设置"
+            aria-label="配置智能体模式"
             className="icon-button ai-side-panel__tool"
-            onClick={onOpenSettings}
-            title="设置"
+            onClick={onOpenAgentConfig}
+            title="配置智能体模式"
             type="button"
           >
             <Icon name="settings" size={15} />
@@ -116,7 +115,6 @@ export function AiSidePanel({
           onAiSettingsChange={onAiSettingsChange}
           onDismissActiveDocument={onDismissActiveDocument}
           onInsert={onInsert}
-          onOpenAgentConfig={onOpenAgentConfig}
           onOpenSettings={onOpenSettings}
           onRemoveSnippet={onRemoveSnippet}
           onReplace={onReplace}

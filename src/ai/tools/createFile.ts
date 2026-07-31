@@ -7,20 +7,18 @@ import {
   toolOk,
 } from "./helpers";
 import {
-  isTextExtensionAllowed,
-  PathPolicyError,
   resolveWorkspacePath,
 } from "../safety/pathPolicy";
 import type { FileChange } from "../types";
 
 /**
- * 在工作区内创建新的文本文件。
- * 路径必须在工作区内，扩展名必须在白名单内，目标文件必须尚不存在。
+ * 创建新的文本文件。
+ * 路径可相对工作区根或绝对路径；允许任意扩展名；目标文件必须尚不存在。
  */
 export const createFileTool = defineTool({
   name: "create_file",
   description:
-    "在工作区内创建新的文本文件（md/txt/mdx 等）。路径可相对工作区根或绝对路径；目标文件必须尚不存在。",
+    "创建新的文本文件（任意扩展名，如 md/txt/ts/json/html 等）。路径可相对工作区根或绝对路径；允许在工作区外创建；目标文件必须尚不存在。",
   mutates: true,
   inputSchema: {
     type: "object",
@@ -50,17 +48,11 @@ export const createFileTool = defineTool({
       }
       const content = readString(record, "content") ?? "";
 
-      // 路径校验：工作区范围 + 扩展名白名单
+      // 路径解析：允许工作区外，允许任意扩展名
       const portable = resolveWorkspacePath(
         ctx.bridge.workspaceRoot,
         rawPath,
       );
-      if (!isTextExtensionAllowed(portable)) {
-        throw new PathPolicyError(
-          "extension-denied",
-          `不允许创建该类型文件：${portable}`,
-        );
-      }
 
       // 检查文件是否已存在
       let exists = false;

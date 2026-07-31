@@ -14,7 +14,7 @@ import {
 export const listDirTool = defineTool({
   name: "list_dir",
   description:
-    "列出工作区内某个目录的子项（目录 + 文本文件）。path 可相对工作区根或绝对路径；省略则列出工作区根。",
+    "列出某个目录的子项（目录 + 文件）。path 可相对工作区根或绝对路径；省略则列出工作区根。",
   mutates: false,
   inputSchema: {
     type: "object",

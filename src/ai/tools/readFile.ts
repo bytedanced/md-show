@@ -9,12 +9,12 @@ import {
 } from "./helpers";
 
 /**
- * 读取工作区内文本文件；已打开标签优先返回未保存内容。
+ * 读取文本文件；已打开标签优先返回未保存内容。
  */
 export const readFileTool = defineTool({
   name: "read_file",
   description:
-    "读取工作区内的文本文件（md/txt 等）。若文件已在编辑器打开，优先返回标签页内容（含未保存修改）。可用 offset/limit 按行分段读取。",
+    "读取文本文件（任意扩展名）。若文件已在编辑器打开，优先返回标签页内容（含未保存修改）。可用 offset/limit 按行分段读取。",
   mutates: false,
   inputSchema: {
     type: "object",

@@ -24,6 +24,7 @@ import {
   MarkdownPreview,
   type PreviewTheme,
 } from "./MarkdownPreview";
+import { isMarkdownPath } from "../lib/language";
 
 type ViewMode = "edit" | "split" | "preview";
 
@@ -86,6 +87,9 @@ export function Workspace({
   theme,
 }: WorkspaceProps) {
   const [viewMode, setViewMode] = useState<ViewMode>("split");
+  // 非 Markdown 文件不显示预览栏（避免代码被当 md 渲染）。
+  const isMarkdown = isMarkdownPath(filePath);
+  const effectiveViewMode: ViewMode = isMarkdown ? viewMode : "edit";
   const [splitRatio, setSplitRatio] = useState(readSplitRatio);
   const [isResizing, setIsResizing] = useState(false);
   const [scrollSyncEnabled, setScrollSyncEnabled] = useState(
@@ -348,7 +352,7 @@ export function Workspace({
       previewPane.querySelector<HTMLElement>(".markdown-preview");
     const resizeObserver =
       previewContentRoot &&
-      typeof ResizeObserver !== "undefined"
+        typeof ResizeObserver !== "undefined"
         ? new ResizeObserver(resyncAfterLayout)
         : null;
     if (previewContentRoot && resizeObserver) {
@@ -411,8 +415,8 @@ export function Workspace({
   const panesStyle =
     viewMode === "split"
       ? {
-          gridTemplateColumns: `minmax(0, ${splitRatio}fr) 6px minmax(0, ${1 - splitRatio}fr)`,
-        }
+        gridTemplateColumns: `minmax(0, ${splitRatio}fr) 6px minmax(0, ${1 - splitRatio}fr)`,
+      }
       : undefined;
 
   return (
@@ -427,42 +431,44 @@ export function Workspace({
         tabs={tabs}
       />
 
-      <div
-        className="view-switcher view-switcher--floating"
-        aria-label="视图模式"
-      >
-        {(["edit", "split", "preview"] as const).map((mode) => (
-          <button
-            aria-pressed={viewMode === mode}
-            className={viewMode === mode ? "is-active" : ""}
-            key={mode}
-            onClick={() => setViewMode(mode)}
-            title={
-              mode === "edit"
-                ? "仅编辑 (Ctrl+1)"
-                : mode === "split"
-                  ? "编辑与预览 (Ctrl+2)"
-                  : "仅预览 (Ctrl+3)"
-            }
-            type="button"
-          >
-            {mode === "edit" ? "编辑" : mode === "split" ? "分栏" : "预览"}
-          </button>
-        ))}
-        {viewMode === "split" && (
-          <button
-            aria-pressed={scrollSyncEnabled}
-            className={`view-switcher__sync${scrollSyncEnabled ? " is-active" : ""}`}
-            onClick={() => setScrollSyncEnabled((enabled) => !enabled)}
-            title={scrollSyncEnabled ? "关闭同步滚动" : "开启同步滚动"}
-            type="button"
-          >
-            同步滚动
-          </button>
-        )}
-      </div>
+      {isMarkdown && (
+        <div
+          className="view-switcher view-switcher--floating"
+          aria-label="视图模式"
+        >
+          {(["edit", "split", "preview"] as const).map((mode) => (
+            <button
+              aria-pressed={viewMode === mode}
+              className={viewMode === mode ? "is-active" : ""}
+              key={mode}
+              onClick={() => setViewMode(mode)}
+              title={
+                mode === "edit"
+                  ? "仅编辑 (Ctrl+1)"
+                  : mode === "split"
+                    ? "编辑与预览 (Ctrl+2)"
+                    : "仅预览 (Ctrl+3)"
+              }
+              type="button"
+            >
+              {mode === "edit" ? "编辑" : mode === "split" ? "分栏" : "预览"}
+            </button>
+          ))}
+          {viewMode === "split" && (
+            <button
+              aria-pressed={scrollSyncEnabled}
+              className={`view-switcher__sync${scrollSyncEnabled ? " is-active" : ""}`}
+              onClick={() => setScrollSyncEnabled((enabled) => !enabled)}
+              title={scrollSyncEnabled ? "关闭同步滚动" : "开启同步滚动"}
+              type="button"
+            >
+              同步滚动
+            </button>
+          )}
+        </div>
+      )}
       <div className="panes" ref={panesRef} style={panesStyle}>
-        {viewMode !== "preview" && (
+        {effectiveViewMode !== "preview" && (
           <section
             className="pane editor-pane"
             aria-label="Markdown 编辑区"
@@ -474,6 +480,7 @@ export function Workspace({
                 content={content}
                 onChange={onContentChange}
                 onEditorView={handleEditorView}
+                path={filePath}
                 revealRequest={revealRequest}
                 theme={theme}
               />
@@ -481,7 +488,7 @@ export function Workspace({
           </section>
         )}
 
-        {viewMode === "split" && (
+        {effectiveViewMode === "split" && (
           <div
             aria-orientation="vertical"
             aria-label="调整分栏宽度"
@@ -495,7 +502,7 @@ export function Workspace({
           />
         )}
 
-        {viewMode !== "edit" && (
+        {effectiveViewMode !== "edit" && (
           <section
             className="pane preview-pane"
             aria-label="Markdown 预览区"

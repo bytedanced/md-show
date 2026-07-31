@@ -39,7 +39,6 @@ const ANCHORED_BLOCK_TAGS = [
   "li",
   "ol",
   "p",
-  "table",
   "ul",
 ] as const;
 
@@ -65,6 +64,27 @@ function createAnchoredBlockComponent(
       children,
     );
   };
+}
+
+function TableWrapper({
+  children,
+  node,
+  lineOffset,
+  ...props
+}: {
+  children?: ReactNode;
+  node?: PositionNode;
+  lineOffset: number;
+  [key: string]: unknown;
+}) {
+  return (
+    <div
+      className="table-wrapper"
+      {...sourceLineProps(node?.position?.start?.line, lineOffset)}
+    >
+      <table {...props}>{children}</table>
+    </div>
+  );
 }
 
 export type PreviewTheme = "paper" | "midnight" | "sepia" | "ocean";
@@ -316,6 +336,9 @@ export function MarkdownPreview({
         <div {...sourceLineProps(node?.position?.start?.line, lineOffset)}>
           <MediaVideo {...props} documentPath={documentPath} />
         </div>
+      ),
+      table: ({ node, ...props }: ComponentPropsWithoutRef<"table"> & { node?: PositionNode }) => (
+        <TableWrapper {...props} lineOffset={lineOffset} node={node} />
       ),
     }),
     [documentPath, lineOffset],

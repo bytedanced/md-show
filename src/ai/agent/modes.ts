@@ -41,6 +41,7 @@ const BUILTIN_DEFS: Record<BuiltInMode, ModeDefinition> = {
       "search_workspace",
       "edit_file",
       "create_file",
+      "bash",
     ],
     systemPrompt: undefined,
     isWrite: true,

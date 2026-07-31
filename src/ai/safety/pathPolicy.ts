@@ -89,79 +89,61 @@ export function getExtension(path: string): string {
   return base.slice(index + 1).toLowerCase();
 }
 
-export function isTextExtensionAllowed(path: string): boolean {
-  const extension = getExtension(path);
-  return (TEXT_EXTENSION_WHITELIST as readonly string[]).includes(extension);
+/**
+ * 扩展名校验已放开：始终返回 true。
+ * @deprecated 不再有扩展名限制。
+ */
+export function isTextExtensionAllowed(_path: string): boolean {
+  return true;
 }
 
 /**
- * 将相对 / 绝对路径解析为工作区内的 portable 绝对路径。
- * 相对路径相对于 workspaceRoot；禁止 `..` 逃逸出工作区。
+ * 将相对 / 绝对路径解析为 portable 路径。
+ * - 绝对路径：直接规范化。
+ * - 相对路径：若有 workspaceRoot 则相对其解析；否则保留相对路径。
+ * - 不再限制工作区边界，允许访问工作区外文件。
  */
 export function resolveWorkspacePath(
   workspaceRoot: string | null,
   targetPath: string,
 ): string {
-  if (!workspaceRoot?.trim()) {
-    throw new PathPolicyError(
-      "no-workspace",
-      "未打开工作区，无法访问工作区文件。",
-    );
-  }
-
-  const root = normalizePath(workspaceRoot).replace(/\/+$/, "");
   const trimmed = targetPath.trim();
-  if (!trimmed || trimmed === "." || trimmed === "./") {
-    return assertInsideWorkspace(workspaceRoot, root);
+  if (!trimmed) {
+    throw new PathPolicyError("invalid-path", "路径为空。");
   }
 
-  const candidate = isAbsolutePath(trimmed)
-    ? normalizePath(trimmed)
-    : normalizePath(`${root}/${trimmed}`);
+  if (isAbsolutePath(trimmed)) {
+    return normalizePath(trimmed);
+  }
 
-  return assertInsideWorkspace(workspaceRoot, candidate);
+  if (trimmed === "." || trimmed === "./") {
+    return workspaceRoot?.trim()
+      ? normalizePath(workspaceRoot).replace(/\/+$/, "")
+      : ".";
+  }
+
+  return workspaceRoot?.trim()
+    ? normalizePath(`${normalizePath(workspaceRoot)}/${trimmed}`)
+    : normalizePath(trimmed);
 }
 
 /**
- * 校验目标路径是否位于工作区内。
- * Windows 盘符路径比较前统一小写。
+ * 不再校验工作区边界，仅规范化路径。
+ * @deprecated 工作区边界限制已放开。
  */
 export function assertInsideWorkspace(
-  workspaceRoot: string | null,
+  _workspaceRoot: string | null,
   targetPath: string,
 ): string {
-  if (!workspaceRoot?.trim()) {
-    throw new PathPolicyError(
-      "no-workspace",
-      "未打开工作区，无法访问工作区文件。",
-    );
-  }
-
-  const root = normalizePath(workspaceRoot).replace(/\/+$/, "");
-  const target = normalizePath(targetPath);
-  const rootKey = root.toLowerCase();
-  const targetKey = target.toLowerCase();
-
-  if (targetKey !== rootKey && !targetKey.startsWith(`${rootKey}/`)) {
-    throw new PathPolicyError(
-      "outside-workspace",
-      "路径超出当前工作区范围。",
-    );
-  }
-
-  return target;
+  return normalizePath(targetPath);
 }
 
+/**
+ * 解析路径且不校验扩展名（已放开限制）。
+ */
 export function assertReadableTextPath(
   workspaceRoot: string | null,
   targetPath: string,
 ): string {
-  const safePath = assertInsideWorkspace(workspaceRoot, targetPath);
-  if (!isTextExtensionAllowed(safePath)) {
-    throw new PathPolicyError(
-      "extension-denied",
-      `不允许访问该类型文件：${getExtension(safePath) || "(无扩展名)"}`,
-    );
-  }
-  return safePath;
+  return resolveWorkspacePath(workspaceRoot, targetPath);
 }

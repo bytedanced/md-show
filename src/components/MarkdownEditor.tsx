@@ -1,10 +1,10 @@
 import CodeMirror from "@uiw/react-codemirror";
-import { markdown } from "@codemirror/lang-markdown";
 import { search, searchKeymap } from "@codemirror/search";
 import { oneDark } from "@codemirror/theme-one-dark";
 import { EditorView, keymap } from "@codemirror/view";
 import { useEffect, useMemo, useRef } from "react";
 import type { Theme } from "../hooks/useTheme";
+import { getLanguageExtension } from "../lib/language";
 
 interface MarkdownEditorProps {
   content: string;
@@ -12,6 +12,8 @@ interface MarkdownEditorProps {
   onEditorView?: (view: EditorView | null) => void;
   revealRequest?: { line: number; token: number } | null;
   theme: Theme;
+  /** 当前文件路径，用于按扩展名选择语法高亮。 */
+  path?: string | null;
 }
 
 export function MarkdownEditor({
@@ -20,10 +22,11 @@ export function MarkdownEditor({
   onEditorView,
   revealRequest,
   theme,
+  path,
 }: MarkdownEditorProps) {
   const extensions = useMemo(
-    () => [markdown(), search({ top: true }), keymap.of(searchKeymap)],
-    [],
+    () => [...getLanguageExtension(path ?? null), search({ top: true }), keymap.of(searchKeymap)],
+    [path],
   );
   const editorViewRef = useRef<EditorView | null>(null);
   const onEditorViewRef = useRef(onEditorView);

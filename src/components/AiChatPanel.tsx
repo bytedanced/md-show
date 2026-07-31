@@ -26,8 +26,10 @@ import {
   type Message,
   type ModelOption,
   type ReasoningEffort,
+  type RunCommandResult,
   type WorkspaceBridge,
 } from "../ai";
+import { invoke } from "@tauri-apps/api/core";
 import { useDebouncedValue } from "../hooks/useDebouncedValue";
 import { AiDebugPanel } from "./AiDebugPanel";
 import { AiMarkdown } from "./AiMarkdown";
@@ -37,8 +39,12 @@ import { Icon } from "./Icon";
 export interface AiDocumentContext {
   path: string | null;
   content: string;
-  /** 编辑器当前选区，仅用于「替换选区」按钮可用性 */
+  /** 编辑器当前选区文本，仅用于「替换选区」按钮可用性 */
   selection: string;
+  /** 编辑器当前选区起始行号（1-based），无选区时为 null */
+  selectionStartLine: number | null;
+  /** 编辑器当前选区结束行号（1-based，含），无选区时为 null */
+  selectionEndLine: number | null;
   outline: string[];
   snippets: ContextSnippet[];
   includeActiveDocument: boolean;
@@ -50,7 +56,6 @@ interface AiChatPanelProps {
   onAiSettingsChange: (settings: AiSettings) => void;
   onDismissActiveDocument: () => void;
   onInsert: (text: string) => void;
-  onOpenAgentConfig: () => void;
   onOpenSettings: () => void;
   onRemoveSnippet: (id: string) => void;
   onReplace: (text: string) => void;
@@ -81,6 +86,14 @@ const QUICK_PROMPTS = [
   "检查语法和表达",
 ];
 
+/** 判断当前运行平台，供模型了解 shell 与路径分隔符差异。 */
+function detectPlatform(): "windows" | "macos" | "linux" {
+  const ua = navigator.userAgent.toLowerCase();
+  if (ua.includes("win")) return "windows";
+  if (ua.includes("mac")) return "macos";
+  return "linux";
+}
+
 /** AI 对话面板主组件：管理气泡列表、流式渲染、工具调用展示与用户操作。 */
 export function AiChatPanel({
   aiSettings,
@@ -88,7 +101,6 @@ export function AiChatPanel({
   onAiSettingsChange,
   onDismissActiveDocument,
   onInsert,
-  onOpenAgentConfig,
   onOpenSettings,
   onRemoveSnippet,
   onReplace,
@@ -125,6 +137,7 @@ export function AiChatPanel({
   };
 
   const [input, setInput] = useState("");
+  const [dismissedSelection, setDismissedSelection] = useState<string | null>(null);
   const [sessions, setSessions] = useState<ChatSession[]>(() => loadSessions());
   const [activeSessionId, setActiveSessionId] = useState<string>(() => {
     const active = getActiveSession(loadSessions());
@@ -153,6 +166,7 @@ export function AiChatPanel({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
+  const isComposingRef = useRef(false);
 
   const profile = getActiveProfile(aiSettings);
   const configured = profile ? isProfileConfigured(profile) : false;
@@ -183,9 +197,26 @@ export function AiChatPanel({
   );
   const hasWorkspace = Boolean(workspaceBridge.workspaceRoot);
   const hasSnippets = document.snippets.length > 0;
-  const showActiveDocChip = document.includeActiveDocument && !hasSnippets;
-  const hasContext = hasSnippets || showActiveDocChip;
+  const selectionTrimmed = document.selection.trim();
+  const selectionSignature = selectionTrimmed
+    ? `${document.path ?? ""}:${document.selectionStartLine}-${document.selectionEndLine}:${selectionTrimmed.slice(0, 50)}`
+    : null;
+  const isSelectionDismissed = selectionSignature != null && dismissedSelection === selectionSignature;
+  const effectiveSelection = !isSelectionDismissed && selectionTrimmed ? document.selection : "";
+  const hasAutoSelection = !isSelectionDismissed && Boolean(selectionTrimmed) && document.selectionStartLine != null;
+  const showActiveDocChip = document.includeActiveDocument && !hasSnippets && !hasAutoSelection;
+  const showSelectionRef = !hasSnippets && !showActiveDocChip && hasAutoSelection;
   const debugEnabled = aiSettings.debug;
+
+  const selectionFileName = document.path
+    ? document.path.split(/[/\\]/).pop() ?? document.path
+    : "未保存文档";
+  const selectionRangeLabel = document.selectionStartLine != null && document.selectionEndLine != null
+    ? document.selectionStartLine === document.selectionEndLine
+      ? `${document.selectionStartLine}`
+      : `${document.selectionStartLine}-${document.selectionEndLine}`
+    : "";
+  const docName = document.path?.split(/[/\\]/).pop() || "未命名文档";
 
   const debugPreviewSource = useMemo(
     () => ({
@@ -196,6 +227,7 @@ export function AiChatPanel({
       mode,
       outline: document.outline,
       path: document.path,
+      selection: effectiveSelection,
       snippets: document.snippets,
     }),
     [
@@ -204,6 +236,7 @@ export function AiChatPanel({
       document.outline,
       document.path,
       document.snippets,
+      effectiveSelection,
       history,
       input,
       mode,
@@ -219,9 +252,12 @@ export function AiChatPanel({
       document: {
         path: debouncedDebugSource.path,
         content: debouncedDebugSource.content,
+        selection: debouncedDebugSource.selection,
         outline: debouncedDebugSource.outline,
         snippets: debouncedDebugSource.snippets,
         includeActiveDocument: debouncedDebugSource.includeActiveDocument,
+        workspaceRoot: workspaceBridge.workspaceRoot,
+        platform: detectPlatform(),
       },
       history: debouncedDebugSource.history,
       systemPrompt:
@@ -422,6 +458,7 @@ export function AiChatPanel({
     setInput("");
     setUploadedImages([]);
     setError(null);
+    setDismissedSelection(null);
     const userMessage: Message = {
       id: createMessageId(),
       role: "user",
@@ -445,9 +482,12 @@ export function AiChatPanel({
       document: {
         path: document.path,
         content: document.content,
+        selection: effectiveSelection,
         outline: document.outline,
         snippets: document.snippets,
         includeActiveDocument: document.includeActiveDocument,
+        workspaceRoot: workspaceBridge.workspaceRoot,
+        platform: detectPlatform(),
       },
       history,
       images: images.length > 0 ? images : undefined,
@@ -484,6 +524,14 @@ export function AiChatPanel({
             applyFileChange: async (change: FileChange) => {
               await workspaceBridge.writeFile(change.path, change.after);
             },
+            runCommand: async (options) => {
+              return invoke<RunCommandResult>("run_bash", {
+                command: options.command,
+                cwd: options.cwd ?? null,
+                timeoutMs: options.timeout ?? null,
+                shell: options.shell ?? null,
+              });
+            },
           },
         },
         (event) => {
@@ -494,13 +542,13 @@ export function AiChatPanel({
                 prev.map((bubble) =>
                   bubble.id === assistantId
                     ? {
-                        ...bubble,
-                        blocks: [
-                          ...(bubble.blocks ?? []),
-                          { type: "thinking", text: event.text, expanded: true },
-                        ],
-                        streaming: true,
-                      }
+                      ...bubble,
+                      blocks: [
+                        ...(bubble.blocks ?? []),
+                        { type: "thinking", text: event.text, expanded: true },
+                      ],
+                      streaming: true,
+                    }
                     : bubble,
                 ),
               );
@@ -549,18 +597,18 @@ export function AiChatPanel({
               prev.map((bubble) =>
                 bubble.id === assistantId
                   ? {
-                      ...bubble,
-                      blocks: [
-                        ...(bubble.blocks ?? []),
-                        {
-                          type: "tool-call",
-                          id: event.call.id,
-                          name: event.call.name,
-                          arguments: event.call.arguments,
-                          status: "running",
-                        },
-                      ],
-                    }
+                    ...bubble,
+                    blocks: [
+                      ...(bubble.blocks ?? []),
+                      {
+                        type: "tool-call",
+                        id: event.call.id,
+                        name: event.call.name,
+                        arguments: event.call.arguments,
+                        status: "running",
+                      },
+                    ],
+                  }
                   : bubble,
               ),
             );
@@ -573,10 +621,10 @@ export function AiChatPanel({
                 const blocks = (bubble.blocks ?? []).map((block) =>
                   block.type === "tool-call" && block.id === event.call.id
                     ? {
-                        ...block,
-                        status: event.ok ? "ok" as const : "error" as const,
-                        result: event.content,
-                      }
+                      ...block,
+                      status: event.ok ? "ok" as const : "error" as const,
+                      result: event.content,
+                    }
                     : block,
                 );
                 return { ...bubble, blocks };
@@ -674,8 +722,6 @@ export function AiChatPanel({
       </div>
     );
   }
-
-  const docName = document.path?.split(/[/\\]/).pop() || "未命名文档";
 
   const handleModelChange = (composite: string) => {
     const sep = composite.lastIndexOf("::");
@@ -1018,6 +1064,26 @@ export function AiChatPanel({
                 </button>
               </div>
             )}
+            {showSelectionRef && (
+              <div
+                className="ai-chat__pill ai-chat__pill--context"
+                title={`${document.path ?? "未保存文档"}\nL${document.selectionStartLine}${document.selectionEndLine !== document.selectionStartLine ? `-L${document.selectionEndLine}` : ""}\n\n${document.selection.trim().slice(0, 300)}`}
+              >
+                <Icon name="info" size={12} />
+                <span className="ai-chat__pill-label">{selectionFileName}</span>
+                <span className="ai-chat__pill-tag">{selectionRangeLabel}</span>
+                <button
+                  aria-label="移除选区上下文"
+                  className="ai-chat__pill-remove"
+                  disabled={isGenerating}
+                  onClick={() => setDismissedSelection(selectionSignature)}
+                  title="移除"
+                  type="button"
+                >
+                  <Icon name="close" size={11} />
+                </button>
+              </div>
+            )}
             {document.snippets.map((snippet) => (
               <div
                 className="ai-chat__pill ai-chat__pill--context"
@@ -1045,11 +1111,6 @@ export function AiChatPanel({
                 </button>
               </div>
             ))}
-            {!hasContext && (
-              <div className="ai-chat__context-hint">
-                未附带文档 · 选中后按 <kbd>Ctrl+L</kbd> 加入
-              </div>
-            )}
           </div>
         </div>
         {uploadedImages.length > 0 && (
@@ -1069,21 +1130,30 @@ export function AiChatPanel({
             ))}
           </div>
         )}
-        <textarea
-          aria-label="向 AI 发送消息"
-          disabled={isGenerating}
-          onChange={(event) => setInput(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" && !event.shiftKey) {
-              event.preventDefault();
-              void sendMessage();
-            }
-          }}
-          onPaste={handlePaste}
-          placeholder="输入问题… Enter 发送，Shift+Enter 换行"
-          rows={3}
-          value={input}
-        />
+        <div className="ai-chat__composer-input-wrap">
+          <textarea
+            aria-label="向 AI 发送消息"
+            className="ai-chat__composer-input"
+            disabled={isGenerating}
+            onChange={(e) => setInput(e.target.value)}
+            onCompositionEnd={() => {
+              isComposingRef.current = false;
+            }}
+            onCompositionStart={() => {
+              isComposingRef.current = true;
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey && !isComposingRef.current) {
+                e.preventDefault();
+                void sendMessage();
+              }
+            }}
+            onPaste={handlePaste}
+            placeholder="输入问题… Enter 发送，Shift+Enter 换行"
+            rows={2}
+            value={input}
+          />
+        </div>
         <div className="ai-chat__composer-footer">
           <div className="ai-chat__composer-meta">
             <label className="ai-chat__pill ai-chat__pill--mode" title="对话模式">
@@ -1105,16 +1175,6 @@ export function AiChatPanel({
                 <Icon name="chevron" size={12} />
               </span>
             </label>
-            <button
-              aria-label="配置智能体模式"
-              className="icon-button ai-chat__composer-tool"
-              disabled={isGenerating}
-              onClick={onOpenAgentConfig}
-              title="配置智能体模式"
-              type="button"
-            >
-              <Icon name="settings" size={14} />
-            </button>
             <label className="ai-chat__pill ai-chat__pill--mode" title="思考强度">
               <span className="ai-chat__pill-label">思考: {thinkingLevel === "disabled" ? "关闭" : thinkingLevel}</span>
               <select

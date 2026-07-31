@@ -10,13 +10,13 @@ import {
 import type { FileChange } from "../types";
 
 /**
- * 编辑工作区内文本文件：查找 old_string 并替换为 new_string。
+ * 编辑文本文件：查找 old_string 并替换为 new_string。
  * 要求 old_string 在文件中唯一匹配（或启用 replace_all 替换全部）。
  */
 export const editFileTool = defineTool({
   name: "edit_file",
   description:
-    "精准编辑工作区内的文本文件。提供 path（目标文件）、old_string（要替换的原文本）、new_string（替换后的新文本）。old_string 在文件中必须唯一出现一次；如需替换全部匹配项，设置 replace_all 为 true。",
+    "精准编辑文本文件。提供 path（目标文件）、old_string（要替换的原文本）、new_string（替换后的新文本）。old_string 在文件中必须唯一出现一次；如需替换全部匹配项，设置 replace_all 为 true。",
   mutates: true,
   inputSchema: {
     type: "object",

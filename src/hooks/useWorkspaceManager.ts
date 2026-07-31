@@ -108,10 +108,6 @@ function ensureMarkdownExtension(path: string) {
   return /\.(md|markdown|mdown|mkd)$/i.test(path) ? path : `${path}.md`;
 }
 
-function isMarkdownFile(name: string) {
-  return /\.(md|markdown|mdown|mkd)$/i.test(name);
-}
-
 function getErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
@@ -260,8 +256,7 @@ async function readWorkspaceTree(
         const isDirectory = Boolean(entry.isDirectory);
         const isFile = Boolean(entry.isFile) || (!isDirectory && !entry.isSymlink);
         return (
-          (isDirectory && !ignoredDirectories.has(entry.name)) ||
-          (isFile && isMarkdownFile(entry.name))
+          (isDirectory && !ignoredDirectories.has(entry.name)) || isFile
         );
       })
       .map(async (entry): Promise<WorkspaceEntry> => {
@@ -286,9 +281,9 @@ async function readWorkspaceTree(
   });
 }
 
-function flattenMarkdownFiles(entries: WorkspaceEntry[]): WorkspaceEntry[] {
+function flattenAllFiles(entries: WorkspaceEntry[]): WorkspaceEntry[] {
   return entries.flatMap((entry) =>
-    entry.isDirectory ? flattenMarkdownFiles(entry.children ?? []) : [entry],
+    entry.isDirectory ? flattenAllFiles(entry.children ?? []) : [entry],
   );
 }
 
@@ -630,13 +625,13 @@ export function useWorkspaceManager(notify: Notify) {
       const nextWorkspaces = existingWorkspace
         ? currentWorkspaces.filter((workspace) => workspace.path !== path)
         : [
-            {
-              name: getWorkspaceName(path),
-              path,
-              updatedAt: Date.now(),
-            },
-            ...currentWorkspaces,
-          ];
+          {
+            name: getWorkspaceName(path),
+            path,
+            updatedAt: Date.now(),
+          },
+          ...currentWorkspaces,
+        ];
       localStorage.setItem(
         PINNED_WORKSPACES_KEY,
         JSON.stringify(nextWorkspaces),
@@ -763,10 +758,10 @@ export function useWorkspaceManager(notify: Notify) {
         const rewrittenContent =
           !entry.isDirectory && originalContent !== undefined
             ? rewriteMovedDocumentMediaPaths(
-                originalContent,
-                entry.path,
-                destination,
-              )
+              originalContent,
+              entry.path,
+              destination,
+            )
             : undefined;
         if (
           rewrittenContent !== undefined &&
@@ -781,24 +776,24 @@ export function useWorkspaceManager(notify: Notify) {
               tab.path === entry.path
                 ? destination
                 : tab.path.startsWith(`${entry.path}\\`) ||
-                    tab.path.startsWith(`${entry.path}/`)
+                  tab.path.startsWith(`${entry.path}/`)
                   ? `${destination}${tab.path.slice(entry.path.length)}`
                   : tab.path;
             return movedPath === tab.path
               ? tab
               : {
-                  ...tab,
-                  content:
-                    tab.path === entry.path && rewrittenContent !== undefined
-                      ? rewrittenContent
-                      : tab.content,
-                  name: getFileName(movedPath),
-                  path: movedPath,
-                  savedContent:
-                    tab.path === entry.path && rewrittenContent !== undefined
-                      ? rewrittenContent
-                      : tab.savedContent,
-                };
+                ...tab,
+                content:
+                  tab.path === entry.path && rewrittenContent !== undefined
+                    ? rewrittenContent
+                    : tab.content,
+                name: getFileName(movedPath),
+                path: movedPath,
+                savedContent:
+                  tab.path === entry.path && rewrittenContent !== undefined
+                    ? rewrittenContent
+                    : tab.savedContent,
+              };
           }),
         );
         await refreshWorkspace();
@@ -860,7 +855,7 @@ export function useWorkspaceManager(notify: Notify) {
         return [];
       }
 
-      const files = flattenMarkdownFiles(workspaceTree);
+      const files = flattenAllFiles(workspaceTree);
       const results: WorkspaceSearchResult[] = [];
       for (const file of files) {
         try {

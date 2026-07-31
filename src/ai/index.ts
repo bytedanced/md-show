@@ -68,6 +68,7 @@ export type {
   OpenTabSnapshot,
   ProviderAdapterId,
   ReasoningEffort,
+  RuntimePlatform,
   StreamChunk,
   ThinkingMode,
   ToolCall,
@@ -120,7 +121,12 @@ export {
   resolveToolsForMode,
   unregisterTool,
 } from "./tools/registry";
-export type { ToolContext, ToolHandler } from "./tools/types";
+export type {
+  RunCommandOptions,
+  RunCommandResult,
+  ToolContext,
+  ToolHandler,
+} from "./tools/types";
 export { defineTool, toToolDefinition } from "./tools/types";
 export {
   BUILTIN_TOOLS,

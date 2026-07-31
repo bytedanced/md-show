@@ -1,5 +1,6 @@
 import { getTool, registerTool } from "./registry";
 import type { ToolHandler } from "./types";
+import { bashTool } from "./bash";
 import { createFileTool } from "./createFile";
 import { editFileTool } from "./editFile";
 import { listDirTool } from "./listDir";
@@ -18,6 +19,7 @@ export const BUILTIN_TOOLS: readonly ToolHandler[] = [
   searchWorkspaceTool,
   editFileTool,
   createFileTool,
+  bashTool,
 ];
 
 /** 幂等注册内置工具，可在 App 启动或面板挂载时调用。 */

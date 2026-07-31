@@ -1,0 +1,1 @@
+{"id":"chatcmpl-01KYVSNA3GEGP722MZDTBXSVG8","type":"message","role":"assistant","content":[{"type":"text","text":"你好，我是DeepSeek，一个由深度求索公司创造、乐于为你提供帮助的AI助手！😊"}],"model":"deepseek-v4-pro","stop_reason":"end_turn","stop_sequence":null,"usage":{"input_tokens":11,"output_tokens":25},"error":null}

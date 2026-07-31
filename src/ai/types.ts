@@ -128,6 +128,8 @@ export interface OpenTabSnapshot {
   dirty: boolean;
 }
 
+export type RuntimePlatform = "windows" | "macos" | "linux";
+
 export interface DocumentContextInput {
   path: string | null;
   content: string;
@@ -137,6 +139,10 @@ export interface DocumentContextInput {
   snippets?: ContextSnippet[];
   /** 无 snippets 时是否自动附带当前文档全文；默认 true。 */
   includeActiveDocument?: boolean;
+  /** 工作区根目录；注入到上下文，让模型知道相对路径基准与 bash 默认 cwd。 */
+  workspaceRoot?: string | null;
+  /** 运行平台；让模型知道可用 shell 与命令语法差异。 */
+  platform?: RuntimePlatform;
 }
 
 /** 显式加入 AI 对话的文档片段。 */

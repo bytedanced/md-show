@@ -107,6 +107,8 @@ export interface WorkspaceBridgeDeps {
   search: (query: string) => Promise<WorkspaceSearchHit[]>;
   /** 可选：写文件后同步更新对应标签页内容，避免标签页缓存覆写磁盘。 */
   updateTabContent?: (path: string, content: string) => void;
+  /** 可选：写文件后触发，用于刷新文件树等 UI 状态。 */
+  onFileChanged?: (path: string) => void;
 }
 
 /** 大小写不敏感地比较两个路径是否指向同一文件。 */
@@ -335,6 +337,7 @@ export function createWorkspaceBridge(
       );
       await deps.writeTextFile(toFsPath(portable), content);
       deps.updateTabContent?.(portable, content);
+      deps.onFileChanged?.(portable);
     },
   };
 }

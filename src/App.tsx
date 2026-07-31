@@ -142,6 +142,10 @@ function App() {
   const [isAiPanelResizing, setIsAiPanelResizing] = useState(false);
   const [isAgentConfigOpen, setIsAgentConfigOpen] = useState(false);
   const [editorSelection, setEditorSelection] = useState("");
+  const [editorSelectionLine, setEditorSelectionLine] = useState<{
+    start: number | null;
+    end: number | null;
+  }>({ start: null, end: null });
   const [aiContextSnippets, setAiContextSnippets] = useState<ContextSnippet[]>(
     [],
   );
@@ -215,14 +219,29 @@ function App() {
     setIsAiPanelResizing(true);
   }, []);
 
+  const syncEditorSelection = useCallback((view: EditorView | null) => {
+    const text = getEditorSelection(view);
+    setEditorSelection(text);
+    if (!view || !text.trim()) {
+      setEditorSelectionLine({ start: null, end: null });
+      return;
+    }
+    const range = captureEditorRange(view);
+    if (range) {
+      setEditorSelectionLine({ start: range.startLine, end: range.endLine });
+    } else {
+      setEditorSelectionLine({ start: null, end: null });
+    }
+  }, []);
+
   const handleEditorViewChange = useCallback((view: EditorView | null) => {
     editorViewRef.current = view;
-    setEditorSelection(getEditorSelection(view));
-  }, []);
+    syncEditorSelection(view);
+  }, [syncEditorSelection]);
 
   useEffect(() => {
     const syncSelection = () => {
-      setEditorSelection(getEditorSelection(editorViewRef.current));
+      syncEditorSelection(editorViewRef.current);
     };
     window.addEventListener("mouseup", syncSelection);
     window.addEventListener("keyup", syncSelection);
@@ -230,7 +249,7 @@ function App() {
       window.removeEventListener("mouseup", syncSelection);
       window.removeEventListener("keyup", syncSelection);
     };
-  }, []);
+  }, [syncEditorSelection]);
 
   useEffect(() => {
     const handleToggle = (event: Event) => {
@@ -344,6 +363,7 @@ function App() {
     wordCount,
     workspaceRoot,
     workspaceTree,
+    refreshWorkspace,
   } = useWorkspaceManager(notify);
 
   const [mcpSyncVersion, setMcpSyncVersion] = useState(0);
@@ -395,8 +415,11 @@ function App() {
             })),
           ),
         updateTabContent: updateTabByPath,
+        onFileChanged: () => {
+          void refreshWorkspace();
+        },
       }),
-    [openTabSnapshots, searchWorkspace, workspaceRoot, updateTabByPath],
+    [openTabSnapshots, searchWorkspace, workspaceRoot, updateTabByPath, refreshWorkspace],
   );
 
   useEffect(() => {
@@ -482,7 +505,7 @@ function App() {
         return;
       }
       updateContent(view.state.doc.toString());
-      setEditorSelection(getEditorSelection(view));
+      syncEditorSelection(view);
       notify({
         message: hadSelection
           ? "已替换选区。"
@@ -491,7 +514,7 @@ function App() {
         tone: "info",
       });
     },
-    [notify, updateContent],
+    [notify, syncEditorSelection, updateContent],
   );
 
   const requestCreateFile = useCallback((parentPath: string) => {
@@ -965,6 +988,8 @@ function App() {
                 path: activeTab.path,
                 content: activeTab.content,
                 selection: editorSelection,
+                selectionStartLine: editorSelectionLine.start,
+                selectionEndLine: editorSelectionLine.end,
                 outline: outline.map((item) => item.text),
                 snippets: aiContextSnippets,
                 includeActiveDocument,

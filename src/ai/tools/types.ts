@@ -7,6 +7,25 @@ import type {
 } from "../types";
 import type { WorkspaceBridge } from "../workspace/bridge";
 
+export interface RunCommandOptions {
+  command: string;
+  cwd?: string;
+  timeout?: number;
+  /** 指定 shell：cmd/powershell/gitbash/sh/bash/zsh。省略按平台默认。 */
+  shell?: string;
+}
+
+export interface RunCommandResult {
+  command: string;
+  cwd: string;
+  shell: string;
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+  durationMs: number;
+  timedOut: boolean;
+}
+
 export interface ToolContext {
   workspaceRoot: string | null;
   openTabs: OpenTabSnapshot[];
@@ -17,6 +36,8 @@ export interface ToolContext {
   applyFileChange?: (change: FileChange) => Promise<void>;
   /** 将变更放入待确认队列（A3 DiffPanel）。 */
   queueFileChange?: (change: FileChange) => Promise<void>;
+  /** shell 命令执行出口（由应用层注入，bash 工具经此调用）。 */
+  runCommand?: (options: RunCommandOptions) => Promise<RunCommandResult>;
 }
 
 export interface ToolHandler extends ToolDefinition {

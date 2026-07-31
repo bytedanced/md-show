@@ -68,6 +68,143 @@ fn export_document_package(
     Ok(())
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RunBashResult {
+    command: String,
+    cwd: String,
+    shell: String,
+    exit_code: i32,
+    stdout: String,
+    stderr: String,
+    duration_ms: u64,
+    timed_out: bool,
+}
+
+/// 在 Windows 上查找 Git Bash 可执行文件路径。
+/// 依次检查常见安装位置；未找到则返回 None（调用方回退到 PATH 中的 bash）。
+#[cfg(windows)]
+fn find_git_bash() -> Option<String> {
+    use std::path::Path;
+
+    // 系统级安装（64 位 / 32 位 Program Files）。
+    let candidates = [
+        r"C:\Program Files\Git\bin\bash.exe",
+        r"C:\Program Files (x86)\Git\bin\bash.exe",
+        r"C:\Program Files\Git\usr\bin\bash.exe",
+    ];
+    for path in &candidates {
+        if Path::new(path).exists() {
+            return Some(path.to_string());
+        }
+    }
+    // 用户级安装（%LOCALAPPDATA%\Programs\Git）。
+    if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
+        let user_path = Path::new(&local_app_data)
+            .join("Programs")
+            .join("Git")
+            .join("bin")
+            .join("bash.exe");
+        if user_path.exists() {
+            return Some(user_path.to_string_lossy().into_owned());
+        }
+    }
+    None
+}
+
+/// 执行 shell 命令。shell 可选：cmd/powershell/gitbash/sh/bash/zsh。
+/// Windows 默认 powershell、macOS 默认 zsh、其它 Unix 默认 bash。
+#[tauri::command]
+async fn run_bash(
+    command: String,
+    cwd: Option<String>,
+    timeout_ms: Option<u64>,
+    shell: Option<String>,
+) -> Result<RunBashResult, String> {
+    use std::process::Stdio;
+    use std::time::{Duration, Instant};
+    use tokio::process::Command;
+
+    let started = Instant::now();
+    let timeout = Duration::from_millis(timeout_ms.unwrap_or(60_000));
+    let shell_name = shell.as_deref().unwrap_or("").to_lowercase();
+
+    // Windows 下查找 Git Bash 可执行文件路径（仅 shell=gitbash 时使用）。
+    #[cfg(windows)]
+    let git_bash_path: Option<String> = if shell_name == "gitbash" {
+        find_git_bash()
+    } else {
+        None
+    };
+
+    #[cfg(windows)]
+    let (program, args, shell_label) = match shell_name.as_str() {
+        "cmd" => ("cmd", vec!["/C", &command], "cmd"),
+        "gitbash" => (
+            // 优先使用探测到的 Git Bash 路径；未找到则回退到 PATH 中的 bash。
+            git_bash_path.as_deref().unwrap_or("bash"),
+            vec!["-c", &command],
+            "gitbash",
+        ),
+        _ => (
+            "powershell",
+            vec!["-NoProfile", "-Command", &command],
+            "powershell",
+        ),
+    };
+    #[cfg(target_os = "macos")]
+    let (program, args, shell_label) = match shell_name.as_str() {
+        "bash" => ("bash", vec!["-c", &command], "bash"),
+        "sh" => ("sh", vec!["-c", &command], "sh"),
+        _ => ("zsh", vec!["-c", &command], "zsh"),
+    };
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let (program, args, shell_label) = match shell_name.as_str() {
+        "sh" => ("sh", vec!["-c", &command], "sh"),
+        "zsh" => ("zsh", vec!["-c", &command], "zsh"),
+        _ => ("bash", vec!["-c", &command], "bash"),
+    };
+
+    let mut cmd = Command::new(program);
+    cmd.args(&args);
+    if let Some(dir) = cwd.as_deref().filter(|s| !s.is_empty()) {
+        cmd.current_dir(dir);
+    }
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let child = cmd
+        .spawn()
+        .map_err(|e| format!("无法启动 {shell_label}：{e}"))?;
+    let outcome = tokio::time::timeout(timeout, child.wait_with_output()).await;
+    let duration_ms = started.elapsed().as_millis() as u64;
+
+    match outcome {
+        Ok(Ok(output)) => Ok(RunBashResult {
+            command,
+            cwd: cwd.unwrap_or_default(),
+            shell: shell_label.to_string(),
+            exit_code: output.status.code().unwrap_or(-1),
+            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+            duration_ms,
+            timed_out: false,
+        }),
+        Ok(Err(e)) => Err(format!("命令执行失败：{e}")),
+        Err(_) => Ok(RunBashResult {
+            command,
+            cwd: cwd.unwrap_or_default(),
+            shell: shell_label.to_string(),
+            exit_code: -1,
+            stdout: String::new(),
+            stderr: format!("命令执行超时（{} ms）", timeout.as_millis()),
+            duration_ms,
+            timed_out: true,
+        }),
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -82,6 +219,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             export_document_package,
+            run_bash,
             mcp_bridge::mcp_connect,
             mcp_bridge::mcp_disconnect,
             mcp_bridge::mcp_list_all_tools,
