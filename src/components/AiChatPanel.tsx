@@ -189,6 +189,9 @@ export function AiChatPanel({
     if (m.reasoningContent) {
       blocks.push({ type: "thinking", text: m.reasoningContent, expanded: false });
     }
+    if (m.content) {
+      blocks.push({ type: "text", text: m.content });
+    }
     if (m.toolCalls) {
       for (const tc of m.toolCalls) {
         const toolMsg = allMsgs.find((tm) => tm.role === "tool" && tm.toolCallId === tc.id);
@@ -203,9 +206,6 @@ export function AiChatPanel({
           expanded: false,
         });
       }
-    }
-    if (m.content) {
-      blocks.push({ type: "text", text: m.content });
     }
     return { id: m.id, role: "assistant", content: m.content, blocks: blocks.length > 0 ? blocks : undefined };
   };
@@ -673,23 +673,33 @@ export function AiChatPanel({
               prev.map((bubble) => {
                 if (bubble.id !== assistantId) return bubble;
                 const blocks = bubble.blocks ?? [];
-                const last = blocks[blocks.length - 1];
-                if (last?.type === "text") {
-                  const updated = [...blocks];
-                  updated[updated.length - 1] = { type: "text", text: assistantText };
-                  return { ...bubble, content: assistantText, blocks: updated, streaming: true };
+                // 找到最后一个 text 块（从后往前找）
+                let lastTextIndex = -1;
+                for (let i = blocks.length - 1; i >= 0; i--) {
+                  if (blocks[i].type === "text") {
+                    lastTextIndex = i;
+                    break;
+                  }
                 }
-                return {
-                  ...bubble,
-                  content: assistantText,
-                  blocks: [...blocks, { type: "text", text: assistantText }],
-                  streaming: true,
-                };
+                // 如果没有 text 块，或最后一个 text 块在工具调用之前，创建新的 text 块
+                if (lastTextIndex < 0 || blocks.slice(lastTextIndex + 1).some(b => b.type === "tool-call")) {
+                  return {
+                    ...bubble,
+                    content: assistantText,
+                    blocks: [...blocks, { type: "text", text: assistantText }],
+                    streaming: true,
+                  };
+                }
+                // 更新现有最后一个 text 块
+                const updated = [...blocks];
+                updated[lastTextIndex] = { type: "text", text: assistantText };
+                return { ...bubble, content: assistantText, blocks: updated, streaming: true };
               }),
             );
           }
           if (event.type === "tool-call") {
             inThinkingPhase = false;
+            assistantText = "";
             setBubbles((prev) =>
               prev.map((bubble) =>
                 bubble.id === assistantId
@@ -740,14 +750,25 @@ export function AiChatPanel({
       setBubbles((prev) =>
         prev.map((bubble) => {
           if (bubble.id !== assistantId) return bubble;
-          const blocks = bubble.blocks ?? [];
-          const hasTextBlock = blocks.some((b) => b.type === "text");
-          if (!hasTextBlock && assistantText) {
-            blocks.push({ type: "text", text: assistantText });
+          let blocks = [...(bubble.blocks ?? [])];
+          // 确保最后一个 text 块有最终内容
+          let lastTextIndex = -1;
+          for (let i = blocks.length - 1; i >= 0; i--) {
+            if (blocks[i].type === "text") {
+              lastTextIndex = i;
+              break;
+            }
+          }
+          if (assistantText) {
+            if (lastTextIndex >= 0 && !blocks.slice(lastTextIndex + 1).some(b => b.type === "tool-call")) {
+              blocks[lastTextIndex] = { type: "text", text: assistantText };
+            } else if (lastTextIndex < 0) {
+              blocks.push({ type: "text", text: assistantText });
+            }
           }
           return {
             ...bubble,
-            content: assistantText || "（无回复内容）",
+            content: assistantText || bubble.content || "（无回复内容）",
             blocks: blocks.length > 0 ? blocks : undefined,
             streaming: false,
           };
@@ -1077,12 +1098,22 @@ export function AiChatPanel({
                   <Icon name="sparkles" size={14} />
                 </span>
                 <div className="ai-chat__message-main">
-                  {bubble.blocks?.filter((b) => b.type === "thinking").map((block, index) =>
-                    renderBlock(bubble, block, index),
-                  )}
-                  <div className="ai-chat__bubble-body">{renderBubbleContent(bubble)}</div>
-                  {bubble.blocks?.filter((b) => b.type === "tool-call").map((block, index) =>
-                    renderBlock(bubble, block, index),
+                  {bubble.blocks?.map((block, index) => {
+                    if (block.type === "text") {
+                      return (
+                        <div className="ai-chat__bubble-body" key={`text-${index}`}>
+                          {bubble.streaming ? (
+                            <AiMarkdown content={block.text} />
+                          ) : (
+                            renderBubbleContent(bubble)
+                          )}
+                        </div>
+                      );
+                    }
+                    return renderBlock(bubble, block, index);
+                  })}
+                  {!bubble.blocks?.some(b => b.type === "text") && bubble.content && (
+                    <div className="ai-chat__bubble-body">{renderBubbleContent(bubble)}</div>
                   )}
                   {bubble.content && !bubble.streaming && !bubble.error && (
                     <div className="ai-chat__bubble-actions">

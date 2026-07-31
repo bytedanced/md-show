@@ -6,6 +6,8 @@ import { editFileTool } from "./editFile";
 import { listDirTool } from "./listDir";
 import { readFileTool } from "./readFile";
 import { searchWorkspaceTool } from "./searchWorkspace";
+import { webSearchTool } from "./webSearch";
+import { webFetchTool } from "./webFetch";
 
 /**
  * 内置工具清单。新增工具：
@@ -17,6 +19,8 @@ export const BUILTIN_TOOLS: readonly ToolHandler[] = [
   listDirTool,
   readFileTool,
   searchWorkspaceTool,
+  webSearchTool,
+  webFetchTool,
   editFileTool,
   createFileTool,
   bashTool,

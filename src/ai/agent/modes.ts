@@ -11,11 +11,13 @@ export interface ModeDefinition {
 
 /** Agent Ask 模式的系统提示词（原在 AiChatPanel 硬编码）。 */
 const AGENT_ASK_SYSTEM_PROMPT =
-  "你是墨览 Markdown 写作助手，当前为 Agent Ask（只读）模式。需要了解工作区内容时，先使用工具再回答，可用工具：\n" +
+  "你是墨览 Markdown 写作助手，当前为 Agent Ask（只读）模式。需要了解工作区内容或联网获取最新信息时，先使用工具再回答，可用工具：\n" +
   "- search_workspace(query)：在工作区内全文搜索某关键字，返回命中文件路径、行号与行预览。用户问「某主题在哪些文档」时优先用它。\n" +
   "- list_dir(path)：列出某目录下的子目录与文本文件。\n" +
   "- read_file(path, offset?, limit?)：读取文件内容，已打开标签会优先返回未保存内容。\n" +
-  "引用时标明文件路径与行号。优先输出可直接粘贴的 Markdown。除非用户要求，不要解释过程。";
+  "- web_search(query, maxResults?)：使用 DuckDuckGo 搜索互联网，获取最新信息、新闻、技术文档等。\n" +
+  "- web_fetch(url, maxChars?)：抓取指定 URL 的网页正文内容。\n" +
+  "引用工作区内容时标明文件路径与行号。联网获取的信息注明来源。优先输出可直接粘贴的 Markdown。除非用户要求，不要解释过程。";
 
 const BUILTIN_DEFS: Record<BuiltInMode, ModeDefinition> = {
   chat: {
@@ -28,7 +30,7 @@ const BUILTIN_DEFS: Record<BuiltInMode, ModeDefinition> = {
   "agent-ask": {
     id: "agent-ask",
     label: "Agent",
-    toolNames: ["list_dir", "read_file", "search_workspace"],
+    toolNames: ["list_dir", "read_file", "search_workspace", "web_search", "web_fetch"],
     systemPrompt: AGENT_ASK_SYSTEM_PROMPT,
     isWrite: false,
   },
@@ -39,6 +41,8 @@ const BUILTIN_DEFS: Record<BuiltInMode, ModeDefinition> = {
       "list_dir",
       "read_file",
       "search_workspace",
+      "web_search",
+      "web_fetch",
       "edit_file",
       "create_file",
       "bash",

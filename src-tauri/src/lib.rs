@@ -2,14 +2,237 @@ use std::{
     fs::File,
     io::{Read, Write},
     path::Path,
+    time::Duration,
 };
 
+use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, USER_AGENT};
+use scraper::{Html, Selector};
 use tauri::Manager;
 use walkdir::WalkDir;
 use zip::{write::SimpleFileOptions, CompressionMethod, ZipWriter};
 
 mod mcp_bridge;
 use mcp_bridge::McpState;
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WebSearchResult {
+    title: String,
+    url: String,
+    snippet: String,
+}
+
+fn build_http_client() -> Result<reqwest::Client, String> {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        USER_AGENT,
+        HeaderValue::from_static(
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+        ),
+    );
+    headers.insert(
+        ACCEPT,
+        HeaderValue::from_static("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"),
+    );
+
+    reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .default_headers(headers)
+        .redirect(reqwest::redirect::Policy::limited(5))
+        .build()
+        .map_err(|e| format!("无法创建 HTTP 客户端：{e}"))
+}
+
+#[tauri::command]
+async fn web_search(
+    query: String,
+    max_results: Option<u32>,
+) -> Result<Vec<WebSearchResult>, String> {
+    let client = build_http_client()?;
+    let max = max_results.unwrap_or(10).min(20);
+
+    let url = format!(
+        "https://html.duckduckgo.com/html/?q={}",
+        urlencoding::encode(&query)
+    );
+
+    let response = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("搜索请求失败：{e}"))?;
+
+    let html = response
+        .text()
+        .await
+        .map_err(|e| format!("读取搜索结果失败：{e}"))?;
+
+    let document = Html::parse_document(&html);
+    let result_selector = Selector::parse(".result").unwrap();
+    let title_selector = Selector::parse(".result__title").unwrap();
+    let link_selector = Selector::parse(".result__url").unwrap();
+    let snippet_selector = Selector::parse(".result__snippet").unwrap();
+
+    let mut results = Vec::new();
+
+    for element in document.select(&result_selector) {
+        if results.len() as u32 >= max {
+            break;
+        }
+
+        let title = element
+            .select(&title_selector)
+            .next()
+            .map(|el| el.text().collect::<String>().trim().to_string())
+            .unwrap_or_default();
+
+        let url = element
+            .select(&link_selector)
+            .next()
+            .map(|el| el.text().collect::<String>().trim().to_string())
+            .unwrap_or_default();
+
+        let snippet = element
+            .select(&snippet_selector)
+            .next()
+            .map(|el| el.text().collect::<String>().trim().to_string())
+            .unwrap_or_default();
+
+        if !title.is_empty() && !url.is_empty() {
+            let full_url = if url.starts_with("http://") || url.starts_with("https://") {
+                url
+            } else {
+                format!("https://{}", url)
+            };
+            results.push(WebSearchResult {
+                title,
+                url: full_url,
+                snippet,
+            });
+        }
+    }
+
+    Ok(results)
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WebFetchResult {
+    url: String,
+    title: String,
+    content: String,
+    truncated: bool,
+}
+
+#[tauri::command]
+async fn web_fetch(url: String, max_chars: Option<u32>) -> Result<WebFetchResult, String> {
+    let client = build_http_client()?;
+    let max = max_chars.unwrap_or(50000).min(500000) as usize;
+
+    let response = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("请求失败：{e}"))?;
+
+    if !response.status().is_success() {
+        return Err(format!("HTTP 错误：{}", response.status()));
+    }
+
+    let content_type = response
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+
+    if !content_type.contains("text/html") && !content_type.contains("text/plain") {
+        return Err(format!("不支持的内容类型：{}", content_type));
+    }
+
+    let html = response
+        .text()
+        .await
+        .map_err(|e| format!("读取页面内容失败：{e}"))?;
+
+    let document = Html::parse_document(&html);
+
+    let title = Selector::parse("title")
+        .ok()
+        .and_then(|sel| {
+            document
+                .select(&sel)
+                .next()
+                .map(|el| el.text().collect::<String>().trim().to_string())
+        })
+        .unwrap_or_default();
+
+    let content_selector = Selector::parse(
+        "article, main, .content, .post, #content, #main, .markdown-body, .entry-content",
+    )
+    .unwrap();
+    let body_selector = Selector::parse("body").unwrap();
+
+    let text = if let Some(main_el) = document.select(&content_selector).next() {
+        main_el.text().collect::<Vec<_>>().join("\n")
+    } else if let Some(body_el) = document.select(&body_selector).next() {
+        let mut raw = body_el.text().collect::<Vec<_>>().join("\n");
+        if raw.trim().is_empty() {
+            raw = document
+                .root_element()
+                .text()
+                .collect::<Vec<_>>()
+                .join("\n");
+        }
+        raw
+    } else {
+        document
+            .root_element()
+            .text()
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+
+    let mut cleaned = String::with_capacity(text.len());
+    let mut prev_newline = false;
+    let mut prev_space = false;
+
+    for ch in text.chars() {
+        match ch {
+            '\n' | '\r' => {
+                if !prev_newline {
+                    cleaned.push('\n');
+                    prev_newline = true;
+                    prev_space = false;
+                }
+            }
+            ' ' | '\t' => {
+                if !prev_space && !prev_newline {
+                    cleaned.push(' ');
+                    prev_space = true;
+                }
+            }
+            _ => {
+                cleaned.push(ch);
+                prev_newline = false;
+                prev_space = false;
+            }
+        }
+    }
+
+    let truncated = cleaned.len() > max;
+    if truncated {
+        cleaned.truncate(max);
+        cleaned.push_str("\n\n…（内容已截断）");
+    }
+
+    Ok(WebFetchResult {
+        url,
+        title,
+        content: cleaned,
+        truncated,
+    })
+}
 
 #[tauri::command]
 fn export_document_package(
@@ -220,6 +443,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             export_document_package,
             run_bash,
+            web_search,
+            web_fetch,
             mcp_bridge::mcp_connect,
             mcp_bridge::mcp_disconnect,
             mcp_bridge::mcp_list_all_tools,
