@@ -908,7 +908,6 @@ function App() {
       <AppHeader
         isAiPanelOpen={isAiPanelOpen}
         onExport={dispatchExport}
-        onNewDocument={newDocument}
         onOpenCommandPalette={openCommandPalette}
         onOpenDocument={openDocument}
         onOpenWorkspace={() => void openWorkspace()}

@@ -1304,9 +1304,26 @@ body.is-ai-panel-resizing .cm-editor {
 }
 
 .ai-chat__composer-send--stop {
+  position: relative;
   color: var(--text-strong);
   background: var(--canvas-soft);
   border: 1px solid var(--border);
+}
+
+.ai-chat__composer-send--stop::after {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border-radius: 999px;
+  border: 2px solid color-mix(in srgb, var(--accent) 25%, transparent);
+  border-top-color: var(--accent);
+  animation: ai-send-ring-spin 0.9s linear infinite;
+}
+
+@keyframes ai-send-ring-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .ai-chat__composer-send--stop:hover {
@@ -1976,6 +1993,24 @@ body.is-ai-panel-resizing .cm-editor {
 
 .ai-chat__tool-mark--running {
   opacity: 0.75;
+}
+
+.ai-chat__tool-mark-size {
+  font-variant-numeric: tabular-nums;
+  font-size: 8px;
+  color: var(--muted);
+  background: var(--border);
+  border-radius: 999px;
+  padding: 0 4px;
+  line-height: 1.4;
+}
+
+.ai-chat__tool-call-size {
+  margin-left: 6px;
+  font-variant-numeric: tabular-nums;
+  font-size: 10px;
+  color: var(--muted);
+  white-space: nowrap;
 }
 
 .ai-chat__plain-text {

@@ -20,6 +20,7 @@ import { toolChoiceForMode } from "./modes";
 export type AgentEvent =
   | { type: "text-delta"; text: string }
   | { type: "thinking-delta"; text: string }
+  | { type: "tool-call-delta"; id: string; name: string; arguments: string }
   | { type: "tool-call"; call: ToolCall }
   | { type: "tool-result"; call: ToolCall; content: string; ok: boolean }
   | { type: "message"; message: Message }
@@ -96,6 +97,13 @@ async function collectProviderRound(
         await onEvent({ type: "tool-call", call: pendingToolCall });
       }
       pendingToolCall = mergeToolCallDelta(pendingToolCall, chunk);
+      // 参数还在流式到达：立即上报当前完整参数，UI 可实时展示进度。
+      await onEvent({
+        type: "tool-call-delta",
+        id: pendingToolCall.id,
+        name: pendingToolCall.name,
+        arguments: pendingToolCall.arguments,
+      });
       continue;
     }
     if (chunk.type === "message-stop") {

@@ -697,27 +697,81 @@ export function AiChatPanel({
               }),
             );
           }
+          if (event.type === "tool-call-delta") {
+            inThinkingPhase = false;
+            setBubbles((prev) =>
+              prev.map((bubble) => {
+                if (bubble.id !== assistantId) return bubble;
+                const blocks = bubble.blocks ?? [];
+                const exists = blocks.some(
+                  (block) => block.type === "tool-call" && block.id === event.id,
+                );
+                if (exists) {
+                  return {
+                    ...bubble,
+                    blocks: blocks.map((block) =>
+                      block.type === "tool-call" && block.id === event.id
+                        ? { ...block, arguments: event.arguments }
+                        : block,
+                    ),
+                    streaming: true,
+                  };
+                }
+                return {
+                  ...bubble,
+                  blocks: [
+                    ...blocks,
+                    {
+                      type: "tool-call",
+                      id: event.id,
+                      name: event.name,
+                      arguments: event.arguments,
+                      status: "running",
+                    },
+                  ],
+                  streaming: true,
+                };
+              }),
+            );
+          }
           if (event.type === "tool-call") {
             inThinkingPhase = false;
             assistantText = "";
             setBubbles((prev) =>
-              prev.map((bubble) =>
-                bubble.id === assistantId
-                  ? {
+              prev.map((bubble) => {
+                if (bubble.id !== assistantId) return bubble;
+                const blocks = bubble.blocks ?? [];
+                const exists = blocks.some(
+                  (block) => block.type === "tool-call" && block.id === event.call.id,
+                );
+                if (exists) {
+                  return {
                     ...bubble,
-                    blocks: [
-                      ...(bubble.blocks ?? []),
-                      {
-                        type: "tool-call",
-                        id: event.call.id,
-                        name: event.call.name,
-                        arguments: event.call.arguments,
-                        status: "running",
-                      },
-                    ],
-                  }
-                  : bubble,
-              ),
+                    blocks: blocks.map((block) =>
+                      block.type === "tool-call" && block.id === event.call.id
+                        ? {
+                          ...block,
+                          name: event.call.name,
+                          arguments: event.call.arguments,
+                        }
+                        : block,
+                    ),
+                  };
+                }
+                return {
+                  ...bubble,
+                  blocks: [
+                    ...blocks,
+                    {
+                      type: "tool-call",
+                      id: event.call.id,
+                      name: event.call.name,
+                      arguments: event.call.arguments,
+                      status: "running",
+                    },
+                  ],
+                };
+              }),
             );
           }
           if (event.type === "tool-result") {
@@ -963,6 +1017,9 @@ export function AiChatPanel({
               {block.status === "running" ? "⏳" : block.status === "ok" ? "✓" : "✕"}
             </span>
             {block.name}
+            {block.status === "running" && block.arguments.length > 0 && (
+              <span className="ai-chat__tool-mark-size">{block.arguments.length}</span>
+            )}
           </span>
         );
       }
@@ -983,6 +1040,9 @@ export function AiChatPanel({
             <span className="ai-chat__tool-call-status">
               {block.status === "running" ? "调用中…" : block.status === "ok" ? "成功" : "失败"}
             </span>
+            {block.status === "running" && block.arguments.length > 0 && (
+              <span className="ai-chat__tool-call-size">{block.arguments.length} 字</span>
+            )}
             <span aria-hidden="true" className="ai-chat__tool-call-chevron">
               {block.expanded ? "▾" : "▸"}
             </span>

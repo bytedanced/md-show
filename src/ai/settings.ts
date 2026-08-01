@@ -131,11 +131,11 @@ export function createProfileFromTemplate(
   };
 }
 
-/** 创建默认 AI 设置（取首个模板，AI 默认关闭）。 */
+/** 创建默认 AI 设置（取首个模板，AI 默认启用）。 */
 export function createDefaultAiSettings(): AiSettings {
   const profile = createProfileFromTemplate(PROVIDER_TEMPLATES[0]);
   return {
-    enabled: false,
+    enabled: true,
     debug: false,
     showToolCalls: false,
     activeProfileId: profile.id,

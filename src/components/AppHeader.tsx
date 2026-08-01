@@ -5,7 +5,6 @@ import { Icon } from "./Icon";
 interface AppHeaderProps {
   isAiPanelOpen: boolean;
   onExport: (action: "html" | "package" | "pdf" | "rich-text") => void;
-  onNewDocument: () => void;
   onOpenCommandPalette: () => void;
   onOpenDocument: () => void;
   onOpenWorkspace: () => void;
@@ -19,7 +18,6 @@ interface AppHeaderProps {
 export function AppHeader({
   isAiPanelOpen,
   onExport,
-  onNewDocument,
   onOpenCommandPalette,
   onOpenDocument,
   onOpenWorkspace,
@@ -105,14 +103,6 @@ export function AppHeader({
             </button>
           </div>
         </details>
-        <button
-          className="button button--primary button--compact"
-          onClick={onNewDocument}
-          type="button"
-        >
-          <Icon name="plus" size={16} />
-          新建文档
-        </button>
         <button
           aria-label={isAiPanelOpen ? "关闭 AI 面板" : "打开 AI 面板"}
           aria-pressed={isAiPanelOpen}
