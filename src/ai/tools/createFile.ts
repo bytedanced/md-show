@@ -54,10 +54,10 @@ export const createFileTool = defineTool({
         rawPath,
       );
 
-      // 检查文件是否已存在
+      // 检查文件是否已存在（以磁盘为准，避免标签页缓存误判）
       let exists = false;
       try {
-        await ctx.bridge.readFile(rawPath);
+        await ctx.bridge.readFile(rawPath, { preferDisk: true });
         exists = true;
       } catch {
         // 读取失败即文件不存在，可继续创建

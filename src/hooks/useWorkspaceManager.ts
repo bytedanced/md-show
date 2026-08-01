@@ -237,8 +237,8 @@ function loadSession(): StoredSession {
     // 损坏的恢复数据会被新的会话覆盖。
   }
 
-  const tab = createUntitledTab();
-  return { activeTabId: tab.id, tabs: [tab], workspaceRoot: null };
+  // 无会话记录时不自动创建标签页，主界面显示空白欢迎页。
+  return { activeTabId: "", tabs: [], workspaceRoot: null };
 }
 
 async function readWorkspaceTree(
@@ -523,9 +523,8 @@ export function useWorkspaceManager(notify: Notify) {
         const index = currentTabs.findIndex((tab) => tab.id === tabId);
         const nextTabs = currentTabs.filter((tab) => tab.id !== tabId);
         if (nextTabs.length === 0) {
-          const blank = createUntitledTab();
-          setActiveTabId(blank.id);
-          return [blank];
+          setActiveTabId("");
+          return [];
         }
         if (activeTabId === tabId) {
           setActiveTabId(
@@ -828,9 +827,8 @@ export function useWorkspaceManager(notify: Notify) {
                 }
                 return remaining;
               }
-              const blank = createUntitledTab();
-              setActiveTabId(blank.id);
-              return [blank];
+              setActiveTabId("");
+              return [];
             });
             await refreshWorkspace();
           } catch (error) {

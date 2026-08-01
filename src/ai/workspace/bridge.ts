@@ -29,6 +29,11 @@ export interface WorkspaceReadOptions {
   /** 最多返回行数；默认 DEFAULT_MAX_READ_LINES */
   limit?: number;
   maxChars?: number;
+  /**
+   * true 时跳过标签页缓存、直接读磁盘。
+   * 供 edit_file/create_file 等以磁盘为基准的工具使用，避免标签页缓存导致基于过期内容编辑、落盘丢数据。
+   */
+  preferDisk?: boolean;
 }
 
 export interface WorkspaceReadResult {
@@ -112,7 +117,7 @@ export interface WorkspaceBridgeDeps {
 }
 
 /** 大小写不敏感地比较两个路径是否指向同一文件。 */
-function pathsEqual(left: string, right: string): boolean {
+export function pathsEqual(left: string, right: string): boolean {
   return normalizePath(left).toLowerCase() === normalizePath(right).toLowerCase();
 }
 
@@ -245,8 +250,9 @@ export function createWorkspaceBridge(
       const offset = options.offset ?? 1;
       const limit = options.limit ?? DEFAULT_MAX_READ_LINES;
       const maxChars = options.maxChars ?? DEFAULT_MAX_READ_CHARS;
+      const preferDisk = options.preferDisk === true;
 
-      const tab = findOpenTab(deps.openTabs, portable);
+      const tab = preferDisk ? null : findOpenTab(deps.openTabs, portable);
       if (tab) {
         const sliced = sliceLines(tab.content, offset, limit, maxChars);
         return {

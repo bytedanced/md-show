@@ -8,6 +8,7 @@ import {
   toolOk,
 } from "./helpers";
 import type { FileChange } from "../types";
+import { pathsEqual } from "../workspace/bridge";
 
 /**
  * 编辑文本文件：查找 old_string 并替换为 new_string。
@@ -56,8 +57,24 @@ export const editFileTool = defineTool({
       const newStr = readString(record, "new_string") ?? "";
       const replaceAll = readBool(record, "replace_all") === true;
 
-      // 读取当前文件内容
-      const result = await ctx.bridge.readFile(path, { maxChars: Infinity });
+      // 若该文件在标签页有未保存改动，先落盘，避免编辑基准与磁盘不一致导致用户改动丢失。
+      const dirtyTab = (ctx.bridge.openTabs ?? []).find(
+        (tab) => tab.path !== null && tab.dirty && pathsEqual(tab.path, path),
+      );
+      if (dirtyTab && ctx.applyFileChange) {
+        await ctx.applyFileChange({
+          path: dirtyTab.path!,
+          before: "",
+          after: dirtyTab.content,
+          source: "edit_file",
+        });
+      }
+
+      // 读取当前文件内容：以磁盘为基准，避免标签页缓存导致基于过期内容编辑、落盘丢数据。
+      const result = await ctx.bridge.readFile(path, {
+        maxChars: Infinity,
+        preferDisk: true,
+      });
       const current = result.content;
 
       // 统计 old_string 在文件中的出现次数

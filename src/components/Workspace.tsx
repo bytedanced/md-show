@@ -62,6 +62,7 @@ interface WorkspaceProps {
   onMediaNotice: (message: string, isError?: boolean) => void;
   onNotice: (message: string, title: string, isError?: boolean) => void;
   onNewTab: () => void;
+  onOpenDocument: () => void;
   previewTheme: PreviewTheme;
   revealRequest: { line: number; token: number } | null;
   tabs: DocumentTab[];
@@ -81,6 +82,7 @@ export function Workspace({
   onMediaNotice,
   onNotice,
   onNewTab,
+  onOpenDocument,
   previewTheme,
   revealRequest,
   tabs,
@@ -431,7 +433,35 @@ export function Workspace({
         tabs={tabs}
       />
 
-      {isMarkdown && (
+      {tabs.length === 0 && (
+        <div className="workspace-welcome">
+          <div className="workspace-welcome__mark" aria-hidden="true">
+            M
+          </div>
+          <h2>墨览 Markdown Studio</h2>
+          <p>
+            新建文档开始写作，或打开一个 Markdown 文件 / 工作区。
+          </p>
+          <div className="workspace-welcome__actions">
+            <button
+              className="button button--primary"
+              onClick={onNewTab}
+              type="button"
+            >
+              新建文档
+            </button>
+            <button
+              className="button button--secondary"
+              onClick={onOpenDocument}
+              type="button"
+            >
+              打开文档
+            </button>
+          </div>
+        </div>
+      )}
+
+      {tabs.length > 0 && isMarkdown && (
         <div
           className="view-switcher view-switcher--floating"
           aria-label="视图模式"
@@ -467,58 +497,60 @@ export function Workspace({
           )}
         </div>
       )}
-      <div className="panes" ref={panesRef} style={panesStyle}>
-        {effectiveViewMode !== "preview" && (
-          <section
-            className="pane editor-pane"
-            aria-label="Markdown 编辑区"
-            ref={editorPaneRef}
-          >
-            <div className="editor-surface">
-              <MarkdownEditor
-                key={contentVersion}
-                content={content}
-                onChange={onContentChange}
-                onEditorView={handleEditorView}
-                path={filePath}
-                revealRequest={revealRequest}
-                theme={theme}
-              />
-            </div>
-          </section>
-        )}
+      {tabs.length > 0 && (
+        <div className="panes" ref={panesRef} style={panesStyle}>
+          {effectiveViewMode !== "preview" && (
+            <section
+              className="pane editor-pane"
+              aria-label="Markdown 编辑区"
+              ref={editorPaneRef}
+            >
+              <div className="editor-surface">
+                <MarkdownEditor
+                  key={contentVersion}
+                  content={content}
+                  onChange={onContentChange}
+                  onEditorView={handleEditorView}
+                  path={filePath}
+                  revealRequest={revealRequest}
+                  theme={theme}
+                />
+              </div>
+            </section>
+          )}
 
-        {effectiveViewMode === "split" && (
-          <div
-            aria-orientation="vertical"
-            aria-label="调整分栏宽度"
-            aria-valuemax={Math.round(MAX_SPLIT_RATIO * 100)}
-            aria-valuemin={Math.round(MIN_SPLIT_RATIO * 100)}
-            aria-valuenow={Math.round(splitRatio * 100)}
-            className="pane-resizer"
-            onPointerDown={startResize}
-            role="separator"
-            title="拖拽调整分栏宽度"
-          />
-        )}
+          {effectiveViewMode === "split" && (
+            <div
+              aria-orientation="vertical"
+              aria-label="调整分栏宽度"
+              aria-valuemax={Math.round(MAX_SPLIT_RATIO * 100)}
+              aria-valuemin={Math.round(MIN_SPLIT_RATIO * 100)}
+              aria-valuenow={Math.round(splitRatio * 100)}
+              className="pane-resizer"
+              onPointerDown={startResize}
+              role="separator"
+              title="拖拽调整分栏宽度"
+            />
+          )}
 
-        {effectiveViewMode !== "edit" && (
-          <section
-            className="pane preview-pane"
-            aria-label="Markdown 预览区"
-            ref={previewPaneRef}
-          >
-            <article className="preview-content">
-              <MarkdownPreview
-                content={previewContent}
-                customCss={customCss}
-                documentPath={filePath}
-                previewTheme={previewTheme}
-              />
-            </article>
-          </section>
-        )}
-      </div>
+          {effectiveViewMode !== "edit" && (
+            <section
+              className="pane preview-pane"
+              aria-label="Markdown 预览区"
+              ref={previewPaneRef}
+            >
+              <article className="preview-content">
+                <MarkdownPreview
+                  content={previewContent}
+                  customCss={customCss}
+                  documentPath={filePath}
+                  previewTheme={previewTheme}
+                />
+              </article>
+            </section>
+          )}
+        </div>
+      )}
       {isDraggingMedia && (
         <div className="media-drop-overlay">
           <div>

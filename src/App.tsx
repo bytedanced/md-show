@@ -976,6 +976,7 @@ function App() {
                 })
               }
               onNewTab={newDocument}
+              onOpenDocument={openDocument}
               previewTheme={previewTheme}
               revealRequest={revealRequest}
               tabs={tabs}
