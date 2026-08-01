@@ -15,6 +15,7 @@ interface AiSidePanelProps {
   onOpenAgentConfig: () => void;
   onOpenSettings: () => void;
   onRemoveSnippet: (id: string) => void;
+  onClearSnippets: () => void;
   onReplace: (text: string) => void;
   onResizeStart: (event: ReactPointerEvent<HTMLDivElement>) => void;
   width: number;
@@ -33,6 +34,7 @@ export function AiSidePanel({
   onOpenAgentConfig,
   onOpenSettings,
   onRemoveSnippet,
+  onClearSnippets,
   onReplace,
   onResizeStart,
   width,
@@ -116,6 +118,7 @@ export function AiSidePanel({
           onDismissActiveDocument={onDismissActiveDocument}
           onInsert={onInsert}
           onOpenSettings={onOpenSettings}
+          onClearSnippets={onClearSnippets}
           onRemoveSnippet={onRemoveSnippet}
           onReplace={onReplace}
           workspaceBridge={workspaceBridge}

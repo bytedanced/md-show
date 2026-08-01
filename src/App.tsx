@@ -471,6 +471,10 @@ function App() {
     setAiContextSnippets((prev) => prev.filter((item) => item.id !== id));
   }, []);
 
+  const clearAiContextSnippets = useCallback(() => {
+    setAiContextSnippets([]);
+  }, []);
+
   const dismissActiveDocumentContext = useCallback(() => {
     setIncludeActiveDocument(false);
   }, []);
@@ -1002,6 +1006,7 @@ function App() {
               onInsert={insertAiText}
               onOpenAgentConfig={() => setIsAgentConfigOpen(true)}
               onOpenSettings={() => openSettings("ai")}
+              onClearSnippets={clearAiContextSnippets}
               onRemoveSnippet={removeAiContextSnippet}
               onReplace={replaceAiText}
               onResizeStart={startAiPanelResize}

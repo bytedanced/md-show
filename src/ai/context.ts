@@ -96,14 +96,17 @@ function formatSnippets(
   }
 
   return {
-    text: `用户附带的上下文片段（共 ${snippets.length} 个）：\n\n${blocks.join("\n\n")}`,
+    text: `用户当前选中的内容（共 ${snippets.length} 个）：\n\n${blocks.join("\n\n")}`,
     truncated,
   };
 }
 
 /**
- * 将当前文档 / 显式片段拼成 system + context 消息。
- * 优先使用 snippets；否则在 includeActiveDocument !== false 时附带全文或旧版 selection。
+ * 将当前文档 / 显式片段拼成 system + 用户上下文消息。
+ * 不变的静态信息（工作区根目录、运行平台）并入首条 system 提示词；
+ * 变化的信息（文档路径、大纲、选中内容/片段）以 user 角色、紧贴当前提问发送，
+ * 避免被长对话稀释，也避开部分 OpenAI 兼容服务只认首条 system 的坑。
+ * 优先使用 snippets（有选中时不再附带当前文档信息）；否则在 includeActiveDocument !== false 时附带全文或旧版 selection。
  */
 export function buildDocumentContext(
   options: BuildContextOptions,
@@ -115,23 +118,10 @@ export function buildDocumentContext(
     snippetsCharLimit = DEFAULT_SNIPPETS_CHAR_LIMIT,
   } = options;
 
-  const systemMessage: Message = {
-    id: createMessageId(),
-    role: "system",
-    content: systemPrompt,
-  };
-
-  const snippets = (document.snippets ?? []).filter((item) =>
-    item.text.trim(),
-  );
-  const includeActiveDocument = document.includeActiveDocument !== false;
-
-  const parts: string[] = [];
-  let truncated = false;
-
-  // 注入工作区与环境信息，让模型知道 cwd 默认值、可用 shell、平台语法差异。
+  // 静态信息并入系统提示词：cwd 默认值、可用 shell、平台语法差异，跨轮次不变。
+  const systemParts: string[] = [systemPrompt];
   if (document.workspaceRoot) {
-    parts.push(`工作区根目录：${document.workspaceRoot}`);
+    systemParts.push(`工作区根目录：${document.workspaceRoot}`);
   }
   if (document.platform) {
     const shellHint =
@@ -140,18 +130,24 @@ export function buildDocumentContext(
         : document.platform === "macos"
           ? "macOS（默认 shell: zsh）"
           : "Linux（默认 shell: bash）";
-    parts.push(`运行平台：${shellHint}`);
+    systemParts.push(`运行平台：${shellHint}`);
   }
+  const systemMessage: Message = {
+    id: createMessageId(),
+    role: "system",
+    content: systemParts.join("\n\n"),
+  };
+
+  const snippets = (document.snippets ?? []).filter((item) =>
+    item.text.trim(),
+  );
+  const includeActiveDocument = document.includeActiveDocument !== false;
+
+  // 变化的信息进上下文消息，紧贴当前提问。
+  const parts: string[] = [];
+  let truncated = false;
 
   if (snippets.length > 0) {
-    if (document.path) {
-      parts.push(`当前打开文档：${document.path}`);
-    }
-    if (document.outline?.length) {
-      parts.push(
-        `当前文档大纲：\n${document.outline.map((item) => `- ${item}`).join("\n")}`,
-      );
-    }
     const packed = formatSnippets(snippets, snippetsCharLimit);
     truncated = packed.truncated;
     parts.push(packed.text);
@@ -186,8 +182,8 @@ export function buildDocumentContext(
     systemMessage,
     contextMessage: {
       id: createMessageId(),
-      role: "system",
-      content: parts.join("\n\n"),
+      role: "user",
+      content: `当前用户操作的背景信息：\n\n${parts.join("\n\n")}`,
     },
     truncated,
   };
@@ -206,14 +202,15 @@ export function composeRequestMessages(options: {
   });
 
   const messages: Message[] = [systemMessage];
-  if (contextMessage) {
-    messages.push(contextMessage);
-  }
   for (const message of options.history) {
     if (message.role === "system") {
       continue;
     }
     messages.push(message);
+  }
+  // 上下文紧贴当前提问，避免被长对话稀释；角色为 user，避开只认首条 system 的服务。
+  if (contextMessage) {
+    messages.push(contextMessage);
   }
   messages.push({
     id: createMessageId(),

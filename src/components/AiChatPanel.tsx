@@ -54,6 +54,7 @@ interface AiChatPanelProps {
   aiSettings: AiSettings;
   document: AiDocumentContext;
   onAiSettingsChange: (settings: AiSettings) => void;
+  onClearSnippets: () => void;
   onDismissActiveDocument: () => void;
   onInsert: (text: string) => void;
   onOpenSettings: () => void;
@@ -173,6 +174,7 @@ export function AiChatPanel({
   aiSettings,
   document,
   onAiSettingsChange,
+  onClearSnippets,
   onDismissActiveDocument,
   onInsert,
   onOpenSettings,
@@ -211,7 +213,6 @@ export function AiChatPanel({
   };
 
   const [input, setInput] = useState("");
-  const [dismissedSelection, setDismissedSelection] = useState<string | null>(null);
   const [sessions, setSessions] = useState<ChatSession[]>(() => loadSessions());
   const [activeSessionId, setActiveSessionId] = useState<string>(() => {
     const active = getActiveSession(loadSessions());
@@ -273,25 +274,10 @@ export function AiChatPanel({
   );
   const hasWorkspace = Boolean(workspaceBridge.workspaceRoot);
   const hasSnippets = document.snippets.length > 0;
-  const selectionTrimmed = document.selection.trim();
-  const selectionSignature = selectionTrimmed
-    ? `${document.path ?? ""}:${document.selectionStartLine}-${document.selectionEndLine}:${selectionTrimmed.slice(0, 50)}`
-    : null;
-  const isSelectionDismissed = selectionSignature != null && dismissedSelection === selectionSignature;
-  const effectiveSelection = !isSelectionDismissed && selectionTrimmed ? document.selection : "";
-  const hasAutoSelection = !isSelectionDismissed && Boolean(selectionTrimmed) && document.selectionStartLine != null;
-  const showActiveDocChip = document.includeActiveDocument && !hasSnippets && !hasAutoSelection;
-  const showSelectionRef = !hasSnippets && !showActiveDocChip && hasAutoSelection;
+  // 只有 Ctrl+L 显式加入的片段才作为上下文；编辑器中的普通选区不在 AI 请求中体现。
+  const showActiveDocChip = document.includeActiveDocument && !hasSnippets;
   const debugEnabled = aiSettings.debug;
 
-  const selectionFileName = document.path
-    ? document.path.split(/[/\\]/).pop() ?? document.path
-    : "未保存文档";
-  const selectionRangeLabel = document.selectionStartLine != null && document.selectionEndLine != null
-    ? document.selectionStartLine === document.selectionEndLine
-      ? `${document.selectionStartLine}`
-      : `${document.selectionStartLine}-${document.selectionEndLine}`
-    : "";
   const docName = document.path?.split(/[/\\]/).pop() || "未命名文档";
 
   const debugPreviewSource = useMemo(
@@ -303,7 +289,7 @@ export function AiChatPanel({
       mode,
       outline: document.outline,
       path: document.path,
-      selection: effectiveSelection,
+      selection: "",
       snippets: document.snippets,
     }),
     [
@@ -312,7 +298,6 @@ export function AiChatPanel({
       document.outline,
       document.path,
       document.snippets,
-      effectiveSelection,
       history,
       input,
       mode,
@@ -554,7 +539,7 @@ export function AiChatPanel({
     setInput("");
     setUploadedImages([]);
     setError(null);
-    setDismissedSelection(null);
+    onClearSnippets();
     const userMessage: Message = {
       id: createMessageId(),
       role: "user",
@@ -579,7 +564,7 @@ export function AiChatPanel({
       document: {
         path: document.path,
         content: document.content,
-        selection: effectiveSelection,
+        selection: "",
         outline: document.outline,
         snippets: document.snippets,
         includeActiveDocument: document.includeActiveDocument,
@@ -1260,26 +1245,6 @@ export function AiChatPanel({
                   className="ai-chat__pill-remove"
                   disabled={isGenerating}
                   onClick={onDismissActiveDocument}
-                  title="移除"
-                  type="button"
-                >
-                  <Icon name="close" size={11} />
-                </button>
-              </div>
-            )}
-            {showSelectionRef && (
-              <div
-                className="ai-chat__pill ai-chat__pill--context"
-                title={`${document.path ?? "未保存文档"}\nL${document.selectionStartLine}${document.selectionEndLine !== document.selectionStartLine ? `-L${document.selectionEndLine}` : ""}\n\n${document.selection.trim().slice(0, 300)}`}
-              >
-                <Icon name="info" size={12} />
-                <span className="ai-chat__pill-label">{selectionFileName}</span>
-                <span className="ai-chat__pill-tag">{selectionRangeLabel}</span>
-                <button
-                  aria-label="移除选区上下文"
-                  className="ai-chat__pill-remove"
-                  disabled={isGenerating}
-                  onClick={() => setDismissedSelection(selectionSignature)}
                   title="移除"
                   type="button"
                 >
